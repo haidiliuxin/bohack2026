@@ -23,6 +23,7 @@ class TypingFeatureAccessibilityService : AccessibilityService() {
         val now = System.currentTimeMillis()
         AccessibilitySignalStore.recordRawEvent(this, event.eventType, now)
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) return
+        if (event.isPassword) return
         val added = event.addedCount.coerceAtLeast(0)
         val removed = event.removedCount.coerceAtLeast(0)
         val fallbackDelta = fallbackDelta(event)

@@ -10,6 +10,14 @@ data class DiscomfortBoundary(
     val explanation: String
 )
 
+data class DiscomfortAssessment(
+    val discomfortScore: Float,
+    val shouldShowPopup: Boolean,
+    val shouldNotifyGuardian: Boolean,
+    val confidenceGate: String,
+    val explanation: String
+)
+
 object DiscomfortBoundaryCalculator {
     fun boundaryFor(mode: CareMode): DiscomfortBoundary = when (mode) {
         CareMode.SELF_MONITORING -> DiscomfortBoundary(
@@ -46,5 +54,37 @@ object DiscomfortBoundaryCalculator {
     fun shouldShowPopup(score: Float, mode: CareMode, dataQualityLevel: String): Boolean {
         if (dataQualityLevel == "low") return false
         return score >= boundaryFor(mode).popupThreshold
+    }
+
+    fun assessEvent(
+        mode: CareMode,
+        riskScore: Float,
+        motionLevel: Float,
+        dataQualityLevel: String,
+        sustained: Boolean,
+        guardianAlreadyNotified: Boolean
+    ): DiscomfortAssessment {
+        val boundary = boundaryFor(mode)
+        val motionAdjustedScore = if (motionLevel >= 0.60f) riskScore * 0.55f else riskScore
+        val dataAllowed = dataQualityLevel != "low"
+        val showPopup = dataAllowed && motionAdjustedScore >= boundary.popupThreshold
+        val notifyGuardian = dataAllowed &&
+            boundary.guardianThreshold < 1f &&
+            motionAdjustedScore >= boundary.guardianThreshold &&
+            sustained &&
+            !guardianAlreadyNotified
+        val gate = when {
+            !dataAllowed -> "数据可信度 low，仅记录"
+            motionLevel >= 0.60f -> "运动干扰较高，已降低权重"
+            !sustained && motionAdjustedScore >= boundary.guardianThreshold -> "未满足持续性，仅弹窗观察"
+            else -> "满足当前模式数据门槛"
+        }
+        return DiscomfortAssessment(
+            discomfortScore = motionAdjustedScore.coerceIn(0f, 1f),
+            shouldShowPopup = showPopup,
+            shouldNotifyGuardian = notifyGuardian,
+            confidenceGate = gate,
+            explanation = "模式=${mode.name}; 弹窗阈值=${"%.2f".format(boundary.popupThreshold)}; 守护阈值=${"%.2f".format(boundary.guardianThreshold)}"
+        )
     }
 }

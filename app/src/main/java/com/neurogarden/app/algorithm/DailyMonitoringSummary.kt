@@ -12,5 +12,7 @@ data class DailyMonitoringSummary(
     val topContributingMetrics: List<String>,
     val weatherContext: String,
     val dataQualityLevel: String,
+    val dataQualityWarning: String,
+    val dataMissingReasons: List<String>,
     val summaryText: String
 )

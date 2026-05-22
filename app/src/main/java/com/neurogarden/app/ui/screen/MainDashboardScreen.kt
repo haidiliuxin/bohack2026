@@ -44,6 +44,7 @@ import com.neurogarden.app.algorithm.DiscomfortBoundaryCalculator
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
 import com.neurogarden.app.passive.AccessibilitySignalStore
+import com.neurogarden.app.passive.NotificationPolicyStore
 import com.neurogarden.app.viewmodel.DashboardChartData
 import com.neurogarden.app.viewmodel.RealtimeUiState
 import com.neurogarden.app.viewmodel.SupportMessage
@@ -92,6 +93,7 @@ fun MainDashboardScreen(
     var tab by remember { mutableStateOf(MainTab.TODAY) }
     var selectedEventId by remember { mutableStateOf<Long?>(null) }
     var dismissedAlertEventId by remember { mutableStateOf<Long?>(null) }
+    var dismissedAlertAt by remember { mutableStateOf(0L) }
     val selectedEventState = selectedEventId?.let { id ->
         observeRiskEventById(id).collectAsState(initial = null)
     }
@@ -100,6 +102,7 @@ fun MainDashboardScreen(
     val alertEvent = latestEvent?.takeIf {
         it.id != dismissedAlertEventId &&
             selectedEventId == null &&
+            System.currentTimeMillis() - dismissedAlertAt >= 15L * 60L * 1000L &&
             DiscomfortBoundaryCalculator.shouldShowPopup(it.riskScore, careMode, todaySummary.dataQualityLevel) &&
             it.riskLevel != "stable"
     }
@@ -130,6 +133,8 @@ fun MainDashboardScreen(
             if (selectedEvent != null) {
                 EventDetailScreen(
                     event = selectedEvent,
+                    careMode = careMode,
+                    dataQualityLevel = todaySummary.dataQualityLevel,
                     feedbackTuningMessage = realtime.guardianFeedbackTuningMessage,
                     onBack = { selectedEventId = null },
                     onFeedback = { feedback -> onEventFeedback(selectedEvent.id, feedback) }
@@ -154,6 +159,8 @@ fun MainDashboardScreen(
                     )
 
                     MainTab.GUARDIAN -> GuardianDashboardScreen(
+                        realtime = realtime,
+                        todaySummary = todaySummary,
                         settings = guardianSettings,
                         careMode = careMode,
                         policy = careModePolicy,
@@ -167,6 +174,7 @@ fun MainDashboardScreen(
                     )
 
                     MainTab.SETTINGS -> SettingsDashboardScreen(
+                        realtime = realtime,
                         settings = guardianSettings,
                         careMode = careMode,
                         careModePolicy = careModePolicy,
@@ -188,9 +196,13 @@ fun MainDashboardScreen(
         GentleRiskAlertDialog(
             event = event,
             careMode = careMode,
-            onDismiss = { dismissedAlertEventId = event.id },
+            onDismiss = {
+                dismissedAlertEventId = event.id
+                dismissedAlertAt = System.currentTimeMillis()
+            },
             onOpenEvent = {
                 dismissedAlertEventId = event.id
+                dismissedAlertAt = System.currentTimeMillis()
                 selectedEventId = event.id
                 tab = MainTab.TODAY
             },
@@ -199,10 +211,12 @@ fun MainDashboardScreen(
             onSendSupportReply = onSendSupportReply,
             onSafe = {
                 dismissedAlertEventId = event.id
+                dismissedAlertAt = System.currentTimeMillis()
                 onFeedback("我现在安全")
             },
             onNeedCompanion = {
                 dismissedAlertEventId = event.id
+                dismissedAlertAt = System.currentTimeMillis()
                 onFeedback("我需要陪伴")
             }
         )
@@ -346,6 +360,10 @@ private fun DailySummaryCard(summary: DailyMonitoringSummary) {
             Text("最高风险时段：${summary.highestRiskTimeSegment.toSegmentLabel()}")
             Text("异常事件数量：${summary.riskEventCount}")
             Text("数据可信度：${summary.dataQualityLevel.toQualityLabel()}")
+            Text("可信度说明：${summary.dataQualityWarning}")
+            if (summary.dataMissingReasons.isNotEmpty()) {
+                Text("缺失项：${summary.dataMissingReasons.joinToString("、")}")
+            }
             Text("天气因素：${summary.weatherContext}")
             Text("主要异常指标：${summary.topContributingMetrics.ifEmpty { listOf("暂无") }.joinToString("、")}")
             Text("反馈统计：${summary.guardianFeedbackCount} 次，确认 ${summary.confirmedAbnormalCount} 次，误报 ${summary.falseAlarmCount} 次")
@@ -400,10 +418,20 @@ private fun WeatherContextCard(weatherText: String) {
 @Composable
 private fun EventDetailScreen(
     event: RiskEventEntity,
+    careMode: CareMode,
+    dataQualityLevel: String,
     feedbackTuningMessage: String?,
     onBack: () -> Unit,
     onFeedback: (String) -> Unit
 ) {
+    val discomfort = DiscomfortBoundaryCalculator.assessEvent(
+        mode = careMode,
+        riskScore = event.riskScore,
+        motionLevel = event.motionLevel,
+        dataQualityLevel = dataQualityLevel,
+        sustained = event.endTime - event.startTime >= 15L * 60L * 1000L,
+        guardianAlreadyNotified = event.guardianNotified
+    )
     Column(
         Modifier
             .fillMaxSize()
@@ -427,6 +455,8 @@ private fun EventDetailScreen(
                 event.reasonList().forEach { Text("· $it") }
                 Text("分析摘要：${event.agentAnalysis}")
                 Text("建议动作：${event.suggestedAction}")
+                Text("本地算法：基于个人基线偏离、运动干扰、数据可信度和持续性进行安全阀判断。")
+                Text("模型判断：${event.agentAnalysis.toAgentSourceLabel()}")
             }
         }
         Card(Modifier.fillMaxWidth()) {
@@ -439,6 +469,16 @@ private fun EventDetailScreen(
                 Text("停顿时长：${event.pauseDurationDeviationPercent.signedPercent()}")
                 Text("运动干扰：${"%.2f".format(event.motionLevel)}")
                 Text("天气：${event.weather} / 时间段：${event.timeSegment}")
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("难受边界复核", style = MaterialTheme.typography.titleMedium)
+                Text("不适分：${discomfort.discomfortScore.toPercentText()}")
+                Text("是否弹窗：${if (discomfort.shouldShowPopup) "是" else "否"}")
+                Text("是否建议守护确认：${if (discomfort.shouldNotifyGuardian) "是" else "否"}")
+                Text("安全阀：${discomfort.confidenceGate}")
+                Text(discomfort.explanation)
             }
         }
         GuardianFeedbackButtons(
@@ -510,8 +550,10 @@ private fun HistoryDashboardScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(summary.date, style = MaterialTheme.typography.titleSmall)
-                    Text("最高评分：${"%.2f".format(summary.maxRiskScore)} / 异常 ${summary.riskEventCount} 条")
+                    Text("最高评分：${"%.2f".format(summary.maxRiskScore)} / 平均 ${"%.2f".format(summary.averageRiskScore)} / 异常 ${summary.riskEventCount} 条")
                     Text("误报 ${summary.falseAlarmCount} 条 / 确认 ${summary.confirmedAbnormalCount} 条 / 可信度 ${summary.dataQualityLevel.toQualityLabel()}")
+                    Text("主要指标：${summary.topContributingMetrics.ifEmpty { listOf("暂无") }.joinToString("、")}")
+                    Text("天气关联：${summary.weatherContext}")
                 }
             }
         }
@@ -523,6 +565,8 @@ private fun HistoryDashboardScreen(
 
 @Composable
 private fun GuardianDashboardScreen(
+    realtime: RealtimeUiState,
+    todaySummary: DailyMonitoringSummary,
     settings: GuardianSettings,
     careMode: CareMode,
     policy: CareModePolicy,
@@ -532,6 +576,13 @@ private fun GuardianDashboardScreen(
     onStopPassiveGuardian: () -> Unit,
     onFeedback: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val boundary = DiscomfortBoundaryCalculator.boundaryFor(careMode)
+    val notificationStatus = NotificationPolicyStore.status(
+        context = context.applicationContext,
+        cooldownMs = boundary.cooldownMinutes * 60L * 1000L,
+        maxDailyNotifications = boundary.dailyLimit
+    )
     Column(
         Modifier
             .fillMaxSize()
@@ -542,6 +593,11 @@ private fun GuardianDashboardScreen(
         Text("守护", style = MaterialTheme.typography.headlineMedium)
         Text(careMode.guardianModeDescription(), style = MaterialTheme.typography.bodyMedium)
         DiscomfortBoundaryCard(careMode)
+        RuntimeGuardStatusCard(
+            realtime = realtime,
+            todaySummary = todaySummary,
+            notificationStatus = notificationStatus
+        )
         if (careMode == CareMode.SPECIAL_CARE) {
             Card(Modifier.fillMaxWidth()) {
                 Text("特殊关怀模式会采用更敏感的状态偏离提醒，但仍只处理结构化统计特征，且不提供医疗诊断。", modifier = Modifier.padding(14.dp))
@@ -608,7 +664,27 @@ private fun DiscomfortBoundaryCard(careMode: CareMode) {
 }
 
 @Composable
+private fun RuntimeGuardStatusCard(
+    realtime: RealtimeUiState,
+    todaySummary: DailyMonitoringSummary,
+    notificationStatus: NotificationPolicyStore.Status
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("运行状态", style = MaterialTheme.typography.titleMedium)
+            Text("今日提醒：${notificationStatus.countToday}/${notificationStatus.maxDaily}")
+            Text("冷却剩余：${notificationStatus.cooldownRemainingMinutes} 分钟")
+            Text("现在允许提醒：${if (notificationStatus.canNotifyNow) "是" else "否"}")
+            Text("强提醒数据门槛：${if (todaySummary.dataQualityLevel != "low") "允许" else "仅记录，不强提醒"}")
+            Text("Agent 状态：${realtime.guardianRuntimeStatus.lastAgentStatus}")
+            Text("Agent 说明：${realtime.guardianRuntimeStatus.lastAgentReason}")
+        }
+    }
+}
+
+@Composable
 private fun SettingsDashboardScreen(
+    realtime: RealtimeUiState,
     settings: GuardianSettings,
     careMode: CareMode,
     careModePolicy: CareModePolicy,
@@ -632,6 +708,7 @@ private fun SettingsDashboardScreen(
     ) {
         Text("设置", style = MaterialTheme.typography.headlineMedium)
         CareModeSelector(careMode, careModePolicy, onCareModeChange)
+        AgentConfigCard(realtime)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("隐私与权限", style = MaterialTheme.typography.titleMedium)
@@ -692,6 +769,21 @@ private fun CareModeSelector(
                 }
             }
             Text("当前策略：敏感度 ${"%.2f".format(policy.riskSensitivity)}，通知阈值 ${"%.2f".format(policy.notificationThreshold)}，隐私级别 ${policy.privacyLevel}")
+        }
+    }
+}
+
+@Composable
+private fun AgentConfigCard(realtime: RealtimeUiState) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Agent 配置", style = MaterialTheme.typography.titleMedium)
+            Text("配置状态：${if (realtime.agentConfigured) "已配置" else "未配置"}")
+            Text("模型：${realtime.agentModel.ifBlank { "未设置" }}")
+            Text("接口模式：${realtime.agentApiMode.ifBlank { "未设置" }}")
+            Text("最近一次请求：${realtime.guardianRuntimeStatus.lastAgentStatus}")
+            Text("最近一次说明：${realtime.guardianRuntimeStatus.lastAgentReason}")
+            Text("不会显示 API Key，也不会把被动采集的输入原文发给 Agent。")
         }
     }
 }
@@ -758,6 +850,15 @@ private fun RiskEventEntity.timeRangeText(): String {
         "${format.format(Date(startTime))} - ${format.format(Date(endTime))}"
     }
 }
+
+private fun String.toAgentSourceLabel(): String =
+    when {
+        contains("Mock", ignoreCase = true) -> "Mock fallback，根据本地规则给出补充建议。"
+        contains("MiniMax", ignoreCase = true) -> "MiniMax 基于结构化数据给出二次评判。"
+        contains("acceptance_seed", ignoreCase = true) -> "验收数据内置解释，用于演示闭环。"
+        contains("source=", ignoreCase = true) -> "Agent 或规则模块已返回结构化解释。"
+        else -> "暂无模型解释，使用本地规则兜底。"
+    }
 
 private fun String.toRiskLabel(mode: CareMode = CareMode.FAMILY_GUARDIAN): String = when (mode) {
     CareMode.SELF_MONITORING -> when (this) {

@@ -28,8 +28,10 @@ fun WearHomeScreen(
         Text("NeuroGarden", style = MaterialTheme.typography.title2)
         Text("当前心率：${heartRate?.toString() ?: "--"} BPM")
         Text("状态：$status")
+        Text("点击后会尝试采集并同步到手机")
+        Text("失败时请检查蓝牙、配对和权限")
         Button(onClick = onStart) {
-            Text("开始检测")
+            Text("采集并同步")
         }
     }
 }

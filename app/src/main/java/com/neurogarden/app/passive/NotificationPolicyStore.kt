@@ -11,6 +11,13 @@ object NotificationPolicyStore {
     private const val DEFAULT_COOLDOWN_MS = 15L * 60L * 1000L
     private const val MAX_DAILY_NOTIFICATIONS = 8
 
+    data class Status(
+        val countToday: Int,
+        val maxDaily: Int,
+        val cooldownRemainingMinutes: Int,
+        val canNotifyNow: Boolean
+    )
+
     fun canNotify(
         context: Context,
         now: Long = System.currentTimeMillis(),
@@ -37,6 +44,27 @@ object NotificationPolicyStore {
             .putInt(KEY_NOTIFY_DAY, currentDay)
             .putInt(KEY_NOTIFY_COUNT, count + 1)
             .apply()
+    }
+
+    fun status(
+        context: Context,
+        now: Long = System.currentTimeMillis(),
+        cooldownMs: Long = DEFAULT_COOLDOWN_MS,
+        maxDailyNotifications: Int = MAX_DAILY_NOTIFICATIONS
+    ): Status {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val currentDay = dayOfYear(now)
+        val savedDay = prefs.getInt(KEY_NOTIFY_DAY, -1)
+        val count = if (savedDay == currentDay) prefs.getInt(KEY_NOTIFY_COUNT, 0) else 0
+        val lastNotifyAt = prefs.getLong(KEY_LAST_NOTIFY_AT, 0L)
+        val remainingMs = (cooldownMs - (now - lastNotifyAt)).coerceAtLeast(0L)
+        val can = maxDailyNotifications > 0 && remainingMs == 0L && count < maxDailyNotifications
+        return Status(
+            countToday = count,
+            maxDaily = maxDailyNotifications,
+            cooldownRemainingMinutes = ((remainingMs + 59_999L) / 60_000L).toInt(),
+            canNotifyNow = can
+        )
     }
 
     private fun dayOfYear(timestamp: Long): Int {

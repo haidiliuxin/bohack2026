@@ -3,6 +3,7 @@ package com.neurogarden.app.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.neurogarden.app.BuildConfig
 import com.neurogarden.app.agent.AgentSignalRequest
 import com.neurogarden.app.agent.AgentSignalResponse
 import com.neurogarden.app.agent.GuardianAgentApi
@@ -15,6 +16,7 @@ import com.neurogarden.app.algorithm.CareModePolicies
 import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
 import com.neurogarden.app.algorithm.DataQualityEvaluator
+import com.neurogarden.app.algorithm.DiscomfortBoundaryCalculator
 import com.neurogarden.app.algorithm.EmotionalStateEstimate
 import com.neurogarden.app.algorithm.EmotionCalibrationEngine
 import com.neurogarden.app.algorithm.EmotionalStateEstimator
@@ -79,6 +81,14 @@ data class RealtimeUiState(
     val lastUserEmotionLabel: String? = null,
     val guardianFeedbackTuningMessage: String? = null,
     val weather: WeatherSnapshot = WeatherSnapshot.mock(),
+    val agentConfigured: Boolean = BuildConfig.GUARDIAN_API_KEY.isNotBlank() && BuildConfig.GUARDIAN_API_URL.isNotBlank(),
+    val agentModel: String = BuildConfig.GUARDIAN_MODEL,
+    val agentApiMode: String = if (BuildConfig.GUARDIAN_API_URL.contains("/anthropic", ignoreCase = true)) {
+        "Anthropic compatible"
+    } else {
+        "OpenAI compatible"
+    },
+    val guardianRuntimeStatus: GuardianRuntimeStatus = GuardianRuntimeStatus(),
     val supportMessages: List<SupportMessage> = emptyList()
 )
 
@@ -94,6 +104,16 @@ data class DashboardChartData(
     val typingSpeeds: List<Float> = emptyList(),
     val deleteRates: List<Float> = emptyList(),
     val pauseDurations: List<Float> = emptyList()
+)
+
+data class GuardianRuntimeStatus(
+    val notificationCountToday: Int = 0,
+    val notificationMaxDaily: Int = 0,
+    val cooldownRemainingMinutes: Int = 0,
+    val canNotifyNow: Boolean = false,
+    val dataQualityAllowsStrongAlert: Boolean = false,
+    val lastAgentStatus: String = "未请求",
+    val lastAgentReason: String = "等待结构化数据"
 )
 
 class MainViewModel(
@@ -144,10 +164,10 @@ class MainViewModel(
         recentHabitSamples,
         recentSensorRecords
     ) { events, samples, sensors ->
-        val todayStart = System.currentTimeMillis().startOfDay()
-        val todaySamples = samples.filter { it.timestamp >= todayStart }.sortedBy { it.timestamp }
-        val todaySensors = sensors.filter { it.timestamp >= todayStart }.sortedBy { it.timestamp }
-        val todayEvents = events.sortedBy { it.startTime }
+        val since = System.currentTimeMillis() - DAY_MS
+        val todaySamples = samples.filter { it.timestamp >= since }.sortedBy { it.timestamp }
+        val todaySensors = sensors.filter { it.timestamp >= since }.sortedBy { it.timestamp }
+        val todayEvents = events.filter { it.startTime >= since }.sortedBy { it.startTime }
         DashboardChartData(
             riskScores = (todayEvents.map { it.riskScore } + todaySensors.map { it.stressScore }).takeLast(12),
             heartRates = todaySensors.map { it.heartRate.toFloat() }.ifEmpty { todaySamples.map { it.heartRate.toFloat() } }.filter { it > 0f }.takeLast(12),
@@ -222,6 +242,7 @@ class MainViewModel(
             lastUserEmotionLabel = _uiState.value.lastUserEmotionLabel,
             guardianFeedbackTuningMessage = _uiState.value.guardianFeedbackTuningMessage,
             weather = _uiState.value.weather,
+            guardianRuntimeStatus = _uiState.value.guardianRuntimeStatus,
             supportMessages = _uiState.value.supportMessages
         )
         recordHabitSample(scenario.toHabitSample(result, System.currentTimeMillis()), result)
@@ -249,6 +270,17 @@ class MainViewModel(
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             habitRepository.saveSample(sample)
+            therapyRepository.saveSensorRecord(
+                SensorRecordEntity(
+                    timestamp = sample.timestamp,
+                    heartRate = sample.heartRate,
+                    breathRate = sample.breathRate,
+                    motionLevel = sample.motionLevel,
+                    stressScore = result.stressScore,
+                    confidence = result.confidence,
+                    state = result.state.name.lowercase()
+                )
+            )
             val samples = habitRepository.getSamplesSince(
                 HabitLearningEngine.windowStart(now, HabitLearningWindow.THIRTY_DAYS)
             )
@@ -278,6 +310,12 @@ class MainViewModel(
                     weather = weather.eventLabel(),
                     timeSegment = now.timeSegment()
                 )
+            )
+            val latestQuality = DataQualityEvaluator.evaluate(
+                habitSamples = samples.filter { it.timestamp >= now.startOfDay() },
+                sensorRecords = emptyList(),
+                riskEvents = riskEventRepository.getTodayEvents(now),
+                baseline = baseline
             )
             val personalizedRisk = PersonalizedRiskCalculator.calculate(
                 sample = sample,
@@ -315,7 +353,12 @@ class MainViewModel(
                 emotionalState = emotionalState,
                 trend = trend,
                 feedbackSummaryText = feedbackSummary.toDisplayText(),
-                weather = weather
+                weather = weather,
+                guardianRuntimeStatus = _uiState.value.guardianRuntimeStatus.copy(
+                    dataQualityAllowsStrongAlert = latestQuality.qualityLevel != "low",
+                    lastAgentStatus = if (agentResponse.reason.contains("Mock", ignoreCase = true)) "Mock fallback" else "MiniMax 已返回",
+                    lastAgentReason = agentResponse.reason
+                )
             )
         }
     }
@@ -775,6 +818,8 @@ class MainViewModel(
             topContributingMetrics = topMetrics,
             dataQualityLevel = quality.qualityLevel,
             weatherContext = weatherContext(riskEvents),
+            dataQualityWarning = quality.warningText,
+            dataMissingReasons = quality.missingReasons,
             summaryText = summaryText(maxRisk, riskEvents.size, quality)
         )
     }
@@ -1051,6 +1096,8 @@ class MainViewModel(
             topContributingMetrics = emptyList(),
             weatherContext = _uiState.value.weather.displayText(),
             dataQualityLevel = "low",
+            dataQualityWarning = "今日数据正在采集中。",
+            dataMissingReasons = listOf("尚未形成今日结构化样本"),
             summaryText = "今日数据正在采集中。"
         )
 
