@@ -32,6 +32,7 @@ import com.neurogarden.app.data.local.HabitSampleEntity
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.SensorRecordEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
+import com.neurogarden.app.data.local.UserHabitBaselineEntity
 import com.neurogarden.app.data.datastore.CareModeStore
 import com.neurogarden.app.data.repository.HabitRepository
 import com.neurogarden.app.data.repository.RiskEventRepository
@@ -507,6 +508,10 @@ class MainViewModel(
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             val todayStart = now.startOfDay()
+            if (mode == "acceptance_week") {
+                seedAcceptanceWeek(todayStart)
+                return@launch
+            }
             val profile = habitRepository.getLatestThresholdProfile()
                 ?: HabitLearningEngine.defaultThresholdProfile(now)
             val samples = demoSamples(mode, todayStart)
@@ -540,6 +545,99 @@ class MainViewModel(
                 }
             }
         }
+    }
+
+    private suspend fun seedAcceptanceWeek(todayStart: Long) {
+        val now = System.currentTimeMillis()
+        habitRepository.clearHabitMemory()
+        riskEventRepository.clearAll()
+        therapyRepository.clearSensorRecords()
+        habitRepository.saveBaseline(
+            UserHabitBaselineEntity(
+                avgRestingHeartRate = 72f,
+                avgBreathRate = 12.5f,
+                avgTypingSpeed = 108f,
+                avgDeleteRate = 0.05f,
+                avgPauseDuration = 1.6f,
+                commonActiveStartHour = 8,
+                commonActiveEndHour = 23,
+                avgRecoveryDuration = 14f,
+                sampleCount = 42,
+                confidenceLevel = "high",
+                createdAt = todayStart - 6 * DAY_MS,
+                updatedAt = now
+            )
+        )
+        habitRepository.saveThresholdProfile(
+            ThresholdProfileEntity(
+                heartRateDeltaWarning = 18f,
+                breathRateWarning = 7f,
+                typingSpeedDeltaWarning = 0.30f,
+                deleteRateWarning = 0.14f,
+                pauseDurationWarning = 3.5f,
+                riskTriggerDuration = 15,
+                guardianNotifyThreshold = 0.78f,
+                updatedBy = "acceptance_seed",
+                updatedReason = "multi_day_manual_acceptance",
+                updatedAt = now
+            )
+        )
+
+        val days = listOf(
+            AcceptanceDay(6, "stable", "多云 23C 湿度55% 上海 source=Mock"),
+            AcceptanceDay(5, "mild_wave", "小雨 21C 湿度78% 上海 source=Real"),
+            AcceptanceDay(4, "recovery", "晴 25C 湿度48% 上海 source=Real"),
+            AcceptanceDay(3, "night_event", "阴 22C 湿度69% 上海 source=Real"),
+            AcceptanceDay(2, "motion_noise", "晴 27C 湿度45% 上海 source=Real"),
+            AcceptanceDay(1, "family_check", "多云 24C 湿度61% 上海 source=Real"),
+            AcceptanceDay(0, "special_care", "小雨 20C 湿度82% 上海 source=Real")
+        )
+        days.forEach { day ->
+            val dayStart = todayStart - day.daysAgo * DAY_MS
+            acceptanceSamples(dayStart, day.type).forEach { sample ->
+                habitRepository.saveSample(sample)
+                therapyRepository.saveSensorRecord(sample.toSensorRecord())
+            }
+            acceptanceRiskEvent(dayStart, day.type, day.weather)?.let { event ->
+                riskEventRepository.insertEvent(event)
+            }
+        }
+
+        listOf(
+            AcceptanceFeedback(5, 21, "observe", "轻度波动", "有点累", "刚好", true, "emotion_label"),
+            AcceptanceFeedback(3, 23, "guardian_check", "低落疲惫", "需要陪伴", "及时", true, "guardian_dashboard"),
+            AcceptanceFeedback(2, 13, "observe", "运动干扰", "误报", "太早", false, "guardian_dashboard"),
+            AcceptanceFeedback(1, 18, "guardian_check", "高压紧张", "提醒有效", "刚好", true, "guardian_dashboard")
+        ).forEach { feedback ->
+            val timestamp = todayStart - feedback.daysAgo * DAY_MS + feedback.hour * 60L * 60L * 1000L
+            habitRepository.saveFeedback(
+                FeedbackRecordEntity(
+                    timestamp = timestamp,
+                    predictedRiskLevel = feedback.riskLevel,
+                    predictedState = feedback.state,
+                    userLabel = feedback.label,
+                    timingFeedback = feedback.timing,
+                    helpful = feedback.helpful,
+                    source = feedback.source,
+                    createdAt = timestamp
+                )
+            )
+        }
+
+        _uiState.value = _uiState.value.copy(
+            habitSampleCount = 42,
+            habitConfidenceLevel = "high",
+            habitLearningStatus = "已导入 7 天验收样本，个人基线可信度：高",
+            thresholdStatus = "当前已启用验收阈值",
+            feedbackSummaryText = "提醒反馈：3/4 次有帮助，有效率 75%",
+            personalizedRisk = _uiState.value.personalizedRisk.copy(
+                riskScore = 0.82f,
+                riskLevel = RiskLevel.GUARDIAN_CHECK,
+                confidence = 0.86f,
+                suggestedAction = "建议查看今日异常事件，并进行一次温和状态确认。",
+                careMessage = "我注意到今天的节奏有些偏离。我们可以先慢一点，只确认你现在是否需要陪伴。"
+            )
+        )
     }
 
     fun setCareMode(mode: CareMode) {
@@ -723,6 +821,157 @@ class MainViewModel(
             createdAt = System.currentTimeMillis()
         )
     }
+
+    private data class AcceptanceDay(
+        val daysAgo: Int,
+        val type: String,
+        val weather: String
+    )
+
+    private data class AcceptanceFeedback(
+        val daysAgo: Int,
+        val hour: Int,
+        val riskLevel: String,
+        val state: String,
+        val label: String,
+        val timing: String,
+        val helpful: Boolean,
+        val source: String
+    )
+
+    private fun acceptanceSamples(dayStart: Long, type: String): List<HabitSampleEntity> {
+        val rows = when (type) {
+            "mild_wave" -> listOf(
+                SignalRow(9, 72, 12, 0.09f, 108f, 0.05f, 1.5f, "stable"),
+                SignalRow(16, 84, 15, 0.16f, 82f, 0.11f, 2.9f, "observe"),
+                SignalRow(21, 76, 13, 0.08f, 96f, 0.07f, 2.0f, "stable")
+            )
+            "night_event" -> listOf(
+                SignalRow(9, 71, 12, 0.08f, 113f, 0.04f, 1.3f, "stable"),
+                SignalRow(16, 77, 14, 0.11f, 98f, 0.07f, 2.1f, "stable"),
+                SignalRow(23, 99, 21, 0.08f, 58f, 0.23f, 6.2f, "guardian_check")
+            )
+            "motion_noise" -> listOf(
+                SignalRow(9, 74, 13, 0.10f, 106f, 0.05f, 1.4f, "stable"),
+                SignalRow(16, 104, 22, 0.82f, 88f, 0.09f, 2.4f, "observe"),
+                SignalRow(21, 76, 13, 0.10f, 99f, 0.06f, 1.8f, "stable")
+            )
+            "family_check" -> listOf(
+                SignalRow(9, 73, 13, 0.09f, 106f, 0.05f, 1.5f, "stable"),
+                SignalRow(16, 93, 18, 0.10f, 69f, 0.18f, 4.9f, "guardian_check"),
+                SignalRow(21, 84, 15, 0.08f, 82f, 0.10f, 3.0f, "observe")
+            )
+            "special_care" -> listOf(
+                SignalRow(9, 74, 13, 0.08f, 102f, 0.06f, 1.8f, "stable"),
+                SignalRow(16, 97, 19, 0.09f, 62f, 0.21f, 5.8f, "guardian_check"),
+                SignalRow(21, 92, 18, 0.07f, 67f, 0.18f, 5.0f, "support")
+            )
+            else -> listOf(
+                SignalRow(9, 70, 12, 0.08f, 112f, 0.04f, 1.2f, "stable"),
+                SignalRow(16, 74, 13, 0.12f, 105f, 0.05f, 1.7f, "stable"),
+                SignalRow(21, 71, 12, 0.06f, 101f, 0.05f, 1.8f, "stable")
+            )
+        }
+        return rows.map { row ->
+            HabitSampleEntity(
+                timestamp = dayStart + row.hour * 60L * 60L * 1000L,
+                heartRate = row.heartRate,
+                breathRate = row.breathRate,
+                motionLevel = row.motionLevel,
+                typingSpeed = row.typingSpeed,
+                deleteRate = row.deleteRate,
+                pauseDuration = row.pauseDuration,
+                userFeedback = null,
+                contextTag = "acceptance_${type}_wear_real",
+                riskLevel = row.riskLevel,
+                createdAt = dayStart + row.hour * 60L * 60L * 1000L
+            )
+        }
+    }
+
+    private data class SignalRow(
+        val hour: Int,
+        val heartRate: Int,
+        val breathRate: Int,
+        val motionLevel: Float,
+        val typingSpeed: Float,
+        val deleteRate: Float,
+        val pauseDuration: Float,
+        val riskLevel: String
+    )
+
+    private fun HabitSampleEntity.toSensorRecord(): SensorRecordEntity {
+        val score = when (riskLevel) {
+            "guardian_check" -> 0.78f
+            "support" -> 0.62f
+            "observe" -> 0.42f
+            else -> 0.18f
+        }
+        return SensorRecordEntity(
+            timestamp = timestamp,
+            heartRate = heartRate,
+            breathRate = breathRate,
+            motionLevel = motionLevel,
+            stressScore = score,
+            confidence = if (motionLevel > 0.6f) 0.48f else 0.82f,
+            state = riskLevel
+        )
+    }
+
+    private fun acceptanceRiskEvent(dayStart: Long, type: String, weather: String): RiskEventEntity? {
+        val spec = when (type) {
+            "mild_wave" -> EventSpec(16, 18, 0.48f, "observe", 0.72f, "打字速度偏离个人习惯|删除频率升高", 17f, 20f, -24f, 120f, 81f, 0.16f, "afternoon", "建议稍后查看状态摘要。", false, null, false)
+            "night_event" -> EventSpec(23, 42, 0.79f, "guardian_check", 0.84f, "心率高于个人基线|呼吸频率高于个人基线|停顿时长增加", 35f, 68f, -43f, 360f, 260f, 0.08f, "night", "建议进行一次温和状态确认。", true, "已联系本人", false)
+            "motion_noise" -> EventSpec(16, 20, 0.44f, "observe", 0.48f, "运动干扰导致置信度下降|心率高于个人基线", 42f, 76f, -19f, 100f, 50f, 0.82f, "afternoon", "运动干扰较高，仅作为观察记录。", false, "标记误报", true)
+            "family_check" -> EventSpec(16, 28, 0.74f, "guardian_check", 0.80f, "心率高于个人基线|删除频率升高|停顿时长增加", 29f, 44f, -36f, 260f, 206f, 0.10f, "afternoon", "建议守护人进行一次状态确认。", true, "确认异常", false)
+            "special_care" -> EventSpec(16, 35, 0.82f, "guardian_check", 0.86f, "呼吸频率高于个人基线|打字速度偏离个人习惯|停顿时长增加", 35f, 52f, -43f, 320f, 263f, 0.09f, "afternoon", "建议照护者进行确认，并保持温和陪伴。", true, "继续观察", false)
+            else -> return null
+        }
+        val start = dayStart + spec.hour * 60L * 60L * 1000L
+        return RiskEventEntity(
+            startTime = start,
+            endTime = start + spec.durationMinutes * 60L * 1000L,
+            riskScore = spec.score,
+            riskLevel = spec.level,
+            confidence = spec.confidence,
+            mainReasons = spec.reasons,
+            metricDeviationPercent = "heartRate=${spec.hr};breathRate=${spec.br};typingSpeed=${spec.typing};deleteRate=${spec.delete};pauseDuration=${spec.pause}",
+            heartRateDeviationPercent = spec.hr,
+            breathRateDeviationPercent = spec.br,
+            typingSpeedDeviationPercent = spec.typing,
+            deleteRateDeviationPercent = spec.delete,
+            pauseDurationDeviationPercent = spec.pause,
+            motionLevel = spec.motion,
+            weather = weather,
+            timeSegment = spec.segment,
+            agentAnalysis = "source=acceptance_seed;reason=multi_day_manual_acceptance",
+            suggestedAction = spec.action,
+            guardianNotified = spec.notified,
+            guardianFeedback = spec.feedback,
+            isFalseAlarm = spec.falseAlarm,
+            createdAt = start
+        )
+    }
+
+    private data class EventSpec(
+        val hour: Int,
+        val durationMinutes: Int,
+        val score: Float,
+        val level: String,
+        val confidence: Float,
+        val reasons: String,
+        val hr: Float,
+        val br: Float,
+        val typing: Float,
+        val delete: Float,
+        val pause: Float,
+        val motion: Float,
+        val segment: String,
+        val action: String,
+        val notified: Boolean,
+        val feedback: String?,
+        val falseAlarm: Boolean
+    )
 
     private fun Long.startOfDay(): Long = Calendar.getInstance().apply {
         timeInMillis = this@startOfDay

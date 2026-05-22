@@ -189,6 +189,7 @@ private fun NeuroGardenRoot(
                 },
                 onContinueMock = mainViewModel::nextScenario,
                 onFeedback = mainViewModel::submitFeedback,
+                onBeginSupportConversation = mainViewModel::beginSupportConversation,
                 onEventFeedback = mainViewModel::submitGuardianFeedback,
                 observeRiskEventById = mainViewModel::observeRiskEvent,
                 onClearHabitMemory = mainViewModel::clearHabitMemory,

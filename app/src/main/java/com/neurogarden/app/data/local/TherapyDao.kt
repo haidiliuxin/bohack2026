@@ -18,4 +18,7 @@ interface TherapyDao {
 
     @Query("SELECT * FROM sensor_records WHERE timestamp >= :since ORDER BY timestamp DESC")
     fun observeSensorRecordsSince(since: Long): Flow<List<SensorRecordEntity>>
+
+    @Query("DELETE FROM sensor_records")
+    suspend fun clearSensorRecords()
 }

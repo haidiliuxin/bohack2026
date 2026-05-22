@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -21,6 +22,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -73,6 +75,7 @@ fun MainDashboardScreen(
     onConnectWear: () -> Unit,
     onContinueMock: () -> Unit,
     onFeedback: (String) -> Unit,
+    onBeginSupportConversation: () -> Unit,
     onEventFeedback: (Long, String) -> Unit,
     observeRiskEventById: (Long) -> Flow<RiskEventEntity?>,
     onClearHabitMemory: () -> Unit,
@@ -82,11 +85,18 @@ fun MainDashboardScreen(
 ) {
     var tab by remember { mutableStateOf(MainTab.TODAY) }
     var selectedEventId by remember { mutableStateOf<Long?>(null) }
+    var dismissedAlertEventId by remember { mutableStateOf<Long?>(null) }
     val selectedEventState = selectedEventId?.let { id ->
         observeRiskEventById(id).collectAsState(initial = null)
     }
     val selectedEvent = selectedEventState?.value
     val latestEvent = todayRiskEvents.firstOrNull() ?: recentRiskEvents.firstOrNull()
+    val alertEvent = latestEvent?.takeIf {
+        it.id != dismissedAlertEventId &&
+            selectedEventId == null &&
+            it.riskScore >= 0.60f &&
+            it.riskLevel != "stable"
+    }
 
     Scaffold(
         bottomBar = {
@@ -166,6 +176,66 @@ fun MainDashboardScreen(
             }
         }
     }
+
+    alertEvent?.let { event ->
+        GentleRiskAlertDialog(
+            event = event,
+            careMode = careMode,
+            onDismiss = { dismissedAlertEventId = event.id },
+            onOpenEvent = {
+                dismissedAlertEventId = event.id
+                selectedEventId = event.id
+                tab = MainTab.TODAY
+            },
+            onBeginSupportConversation = {
+                dismissedAlertEventId = event.id
+                onBeginSupportConversation()
+            },
+            onSafe = {
+                dismissedAlertEventId = event.id
+                onFeedback("我现在安全")
+            },
+            onNeedCompanion = {
+                dismissedAlertEventId = event.id
+                onFeedback("我需要陪伴")
+            }
+        )
+    }
+}
+
+@Composable
+private fun GentleRiskAlertDialog(
+    event: RiskEventEntity,
+    careMode: CareMode,
+    onDismiss: () -> Unit,
+    onOpenEvent: () -> Unit,
+    onBeginSupportConversation: () -> Unit,
+    onSafe: () -> Unit,
+    onNeedCompanion: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("检测到状态波动") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("我注意到你的节奏和日常相比有些不一样。你不用解释原因，我们可以先轻轻确认一下。")
+                Text("当前：${event.riskLevel.toRiskLabel(careMode)} / 评分 ${"%.2f".format(event.riskScore)}")
+                Text(event.reasonList().take(2).joinToString("；"))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onBeginSupportConversation) {
+                Text("和我聊聊")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onSafe) { Text("我还好") }
+                TextButton(onClick = onNeedCompanion) { Text("想有人陪") }
+                TextButton(onClick = onOpenEvent) { Text("查看") }
+            }
+        }
+    )
 }
 
 @Composable
@@ -542,6 +612,7 @@ private fun DemoModeCard(onSeedDemoMode: (String) -> Unit) {
             OutlinedButton(onClick = { onSeedDemoMode("mild_wave") }, modifier = Modifier.fillMaxWidth()) { Text("模拟轻度波动") }
             OutlinedButton(onClick = { onSeedDemoMode("night_event") }, modifier = Modifier.fillMaxWidth()) { Text("模拟夜间异常") }
             OutlinedButton(onClick = { onSeedDemoMode("guardian_confirmed") }, modifier = Modifier.fillMaxWidth()) { Text("模拟监护人确认后调参") }
+            OutlinedButton(onClick = { onSeedDemoMode("acceptance_week") }, modifier = Modifier.fillMaxWidth()) { Text("导入多日验收数据") }
         }
     }
 }
