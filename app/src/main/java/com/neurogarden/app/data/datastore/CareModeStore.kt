@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.neurogarden.app.algorithm.CareMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 class CareModeStore(private val context: Context) {
@@ -19,6 +20,8 @@ class CareModeStore(private val context: Context) {
             preferences[CareModeKey] = mode.name
         }
     }
+
+    suspend fun currentModeSnapshot(): CareMode = currentMode.first()
 
     private companion object {
         val CareModeKey = stringPreferencesKey("care_mode")

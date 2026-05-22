@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
             (application as NeuroGardenApp).habitRepository,
             (application as NeuroGardenApp).riskEventRepository,
             (application as NeuroGardenApp).repository,
+            (application as NeuroGardenApp).weatherRepository,
             (application as NeuroGardenApp).careModeStore,
             (application as NeuroGardenApp).guardianAgentApi
         )

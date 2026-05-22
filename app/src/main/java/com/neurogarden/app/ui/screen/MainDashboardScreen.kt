@@ -32,12 +32,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.neurogarden.app.algorithm.CareMode
 import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
+import com.neurogarden.app.passive.AccessibilitySignalStore
 import com.neurogarden.app.viewmodel.RealtimeUiState
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -186,6 +188,7 @@ private fun TodayMonitorScreen(
         Text("今日监测", style = MaterialTheme.typography.headlineMedium)
         Text("当前模式：${careMode.toModeLabel()}", style = MaterialTheme.typography.titleMedium)
         DailySummaryCard(summary)
+        WeatherContextCard(realtime.weather.displayText())
         ScoreCard(
             title = "当前状态评分",
             score = "%.2f".format(latestScore),
@@ -228,6 +231,7 @@ private fun DailySummaryCard(summary: DailyMonitoringSummary) {
             Text("最高风险时段：${summary.highestRiskTimeSegment.toSegmentLabel()}")
             Text("异常事件数量：${summary.riskEventCount}")
             Text("数据可信度：${summary.dataQualityLevel.toQualityLabel()}")
+            Text("天气因素：${summary.weatherContext}")
             Text("主要异常指标：${summary.topContributingMetrics.ifEmpty { listOf("暂无") }.joinToString("、")}")
             Text("反馈统计：${summary.guardianFeedbackCount} 次，确认 ${summary.confirmedAbnormalCount} 次，误报 ${summary.falseAlarmCount} 次")
         }
@@ -239,11 +243,23 @@ private fun MetricGrid(realtime: RealtimeUiState) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("实时指标", style = MaterialTheme.typography.titleMedium)
+            Text("最近心率来源：${heartRateSource(realtime)}")
             Text("运动状态：${realtime.bodyState} / motionLevel ${"%.2f".format(realtime.packet.motionLevel)}")
             Text("打字速度：模拟 ${typingFor(realtime)} 字/分钟")
             Text("删除频率：模拟 ${"%.2f".format(deleteFor(realtime))}")
             Text("停顿时长：模拟 ${"%.1f".format(pauseFor(realtime))} 秒")
             Text("个人基线：${realtime.habitLearningStatus}")
+        }
+    }
+}
+
+@Composable
+private fun WeatherContextCard(weatherText: String) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("环境因素", style = MaterialTheme.typography.titleMedium)
+            Text(weatherText)
+            Text("天气会作为状态解释的辅助因素；网络不可用时自动使用 Mock 天气。")
         }
     }
 }
@@ -441,6 +457,8 @@ private fun SettingsDashboardScreen(
     onSeedDemoMode: (String) -> Unit,
     onDebugLog: () -> Unit
 ) {
+    val context = LocalContext.current
+    val typingStatus = AccessibilitySignalStore.status(context.applicationContext)
     Column(
         Modifier
             .fillMaxSize()
@@ -458,6 +476,20 @@ private fun SettingsDashboardScreen(
                 Text("监护提醒必须用户授权。本系统不是医疗诊断工具。")
                 OutlinedButton(onClick = onOpenAccessibilitySettings, modifier = Modifier.fillMaxWidth()) {
                     Text("打开无障碍输入节奏权限")
+                }
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("输入节奏采集状态", style = MaterialTheme.typography.titleMedium)
+                Text("无障碍服务：${if (typingStatus.accessibilityEnabled) "已开启" else "未开启"}")
+                Text("今日输入节奏样本：${typingStatus.todaySampleCount}")
+                Text("最近采集时间：${typingStatus.lastCollectedAt.toReadableTime()}")
+                Text("当前采集中：${if (typingStatus.collectingNow) "是" else "否"}")
+                Text("系统只统计打字速度、删除频率、停顿时长和输入节奏变化。")
+                Text("系统不会保存用户输入原文、聊天内容、密码内容或具体语义文本。")
+                OutlinedButton(onClick = onOpenAccessibilitySettings, modifier = Modifier.fillMaxWidth()) {
+                    Text("前往系统无障碍设置")
                 }
             }
         }
@@ -614,6 +646,16 @@ private fun String.toSegmentLabel(): String = when (this) {
 
 private fun Float.signedPercent(): String =
     "${if (this >= 0f) "+" else ""}${"%.0f".format(this)}%"
+
+private fun heartRateSource(state: RealtimeUiState): String =
+    if (state.bodyState.contains("Wear OS") || state.bodyState.contains("实时采集")) "Real" else "Mock"
+
+private fun Long.toReadableTime(): String =
+    if (this <= 0L) {
+        "暂无"
+    } else {
+        SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(this))
+    }
 
 private fun typingFor(state: RealtimeUiState): Float = when (state.scenario.name) {
     "CALM" -> 118f

@@ -31,7 +31,8 @@ class RiskEventRepository(private val dao: RiskEventDao) {
         sample: HabitSampleEntity,
         baseline: UserHabitBaselineEntity,
         risk: PersonalizedRiskResult,
-        agentResponse: AgentSignalResponse?
+        agentResponse: AgentSignalResponse?,
+        weather: String = "unknown"
     ) {
         if (risk.riskLevel < RiskLevel.OBSERVE || risk.riskScore < OBSERVE_SCORE) return
 
@@ -52,7 +53,7 @@ class RiskEventRepository(private val dao: RiskEventDao) {
             deleteRateDeviationPercent = deviations.getValue("deleteRate"),
             pauseDurationDeviationPercent = deviations.getValue("pauseDuration"),
             motionLevel = sample.motionLevel,
-            weather = "unknown",
+            weather = weather,
             timeSegment = now.timeSegment(),
             agentAnalysis = buildAgentAnalysis(risk, agentResponse, reasons),
             suggestedAction = risk.suggestedAction,

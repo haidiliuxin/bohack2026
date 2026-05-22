@@ -1,6 +1,9 @@
 package com.neurogarden.app.passive
 
 import android.content.Context
+import android.provider.Settings
+import android.text.TextUtils
+import java.util.Calendar
 
 data class InteractionSignalSnapshot(
     val typingSpeed: Float,
@@ -17,6 +20,13 @@ data class AccessibilityDebugSnapshot(
     val lastEventType: Int
 )
 
+data class TypingFeatureStatus(
+    val accessibilityEnabled: Boolean,
+    val todaySampleCount: Int,
+    val lastCollectedAt: Long,
+    val collectingNow: Boolean
+)
+
 object AccessibilitySignalStore {
     private const val PREFS = "accessibility_signals"
     private const val KEY_TYPED_COUNT = "typed_count"
@@ -25,7 +35,10 @@ object AccessibilitySignalStore {
     private const val KEY_LAST_FLUSH_AT = "last_flush_at"
     private const val KEY_LAST_DELTA = "last_delta"
     private const val KEY_LAST_EVENT_TYPE = "last_event_type"
+    private const val KEY_SAMPLE_DAY = "sample_day"
+    private const val KEY_TODAY_SAMPLE_COUNT = "today_sample_count"
     private const val SERVICE_CONNECTED_EVENT = -100
+    private const val COLLECTING_WINDOW_MS = 2L * 60L * 1000L
 
     fun recordServiceConnected(context: Context, eventTime: Long) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -56,12 +69,18 @@ object AccessibilitySignalStore {
             fallbackDelta < 0 -> -fallbackDelta
             else -> 0
         }
+        val currentDay = dayOfYear(eventTime)
+        val savedDay = prefs.getInt(KEY_SAMPLE_DAY, -1)
+        val todaySampleCount = if (savedDay == currentDay) prefs.getInt(KEY_TODAY_SAMPLE_COUNT, 0) else 0
+        val hasFeatureDelta = typedDelta > 0 || deletedDelta > 0
         prefs.edit()
             .putInt(KEY_TYPED_COUNT, typed + typedDelta)
             .putInt(KEY_DELETE_COUNT, deleted + deletedDelta)
             .putLong(KEY_LAST_EVENT_AT, eventTime)
             .putInt(KEY_LAST_DELTA, typedDelta - deletedDelta)
             .putInt(KEY_LAST_EVENT_TYPE, eventType)
+            .putInt(KEY_SAMPLE_DAY, currentDay)
+            .putInt(KEY_TODAY_SAMPLE_COUNT, todaySampleCount + if (hasFeatureDelta) 1 else 0)
             .apply()
     }
 
@@ -116,5 +135,36 @@ object AccessibilitySignalStore {
             lastDelta = prefs.getInt(KEY_LAST_DELTA, 0),
             lastEventType = prefs.getInt(KEY_LAST_EVENT_TYPE, 0)
         )
+    }
+
+    fun status(context: Context, now: Long = System.currentTimeMillis()): TypingFeatureStatus {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val currentDay = dayOfYear(now)
+        val savedDay = prefs.getInt(KEY_SAMPLE_DAY, -1)
+        val lastEventAt = prefs.getLong(KEY_LAST_EVENT_AT, 0L)
+        val todaySamples = if (savedDay == currentDay) prefs.getInt(KEY_TODAY_SAMPLE_COUNT, 0) else 0
+        return TypingFeatureStatus(
+            accessibilityEnabled = isAccessibilityServiceEnabled(context),
+            todaySampleCount = todaySamples,
+            lastCollectedAt = lastEventAt,
+            collectingNow = lastEventAt > 0L && now - lastEventAt <= COLLECTING_WINDOW_MS
+        )
+    }
+
+    private fun isAccessibilityServiceEnabled(context: Context): Boolean {
+        val expected = "${context.packageName}/com.neurogarden.app.passive.TypingFeatureAccessibilityService"
+        val enabledServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        val splitter = TextUtils.SimpleStringSplitter(':')
+        splitter.setString(enabledServices)
+        return splitter.any { it.equals(expected, ignoreCase = true) }
+    }
+
+    private fun dayOfYear(timestamp: Long): Int {
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = timestamp
+        return calendar.get(Calendar.YEAR) * 1000 + calendar.get(Calendar.DAY_OF_YEAR)
     }
 }

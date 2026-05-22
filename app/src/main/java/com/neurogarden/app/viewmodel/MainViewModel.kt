@@ -36,6 +36,8 @@ import com.neurogarden.app.data.datastore.CareModeStore
 import com.neurogarden.app.data.repository.HabitRepository
 import com.neurogarden.app.data.repository.RiskEventRepository
 import com.neurogarden.app.data.repository.TherapyRepository
+import com.neurogarden.app.data.repository.WeatherRepository
+import com.neurogarden.app.data.repository.WeatherSnapshot
 import com.neurogarden.app.sensor.MockScenario
 import com.neurogarden.shared.model.SensorPacket
 import com.neurogarden.shared.model.StressResult
@@ -74,6 +76,7 @@ data class RealtimeUiState(
     val feedbackSummaryText: String = "还没有足够反馈来评估提醒准确性",
     val lastUserEmotionLabel: String? = null,
     val guardianFeedbackTuningMessage: String? = null,
+    val weather: WeatherSnapshot = WeatherSnapshot.mock(),
     val supportMessages: List<SupportMessage> = emptyList()
 )
 
@@ -86,6 +89,7 @@ class MainViewModel(
     private val habitRepository: HabitRepository,
     private val riskEventRepository: RiskEventRepository,
     private val therapyRepository: TherapyRepository,
+    private val weatherRepository: WeatherRepository,
     private val careModeStore: CareModeStore,
     private val guardianAgentApi: GuardianAgentApi
 ) : ViewModel() {
@@ -146,6 +150,13 @@ class MainViewModel(
 
     fun observeRiskEvent(id: Long) = riskEventRepository.observeEventById(id)
 
+    init {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(weather = weatherRepository.current())
+            _uiState.value = _uiState.value.copy(weather = weatherRepository.refresh())
+        }
+    }
+
     fun enterScenario(scenario: MockScenario = MockScenario.ANXIOUS) {
         updateScenario(scenario)
     }
@@ -181,6 +192,7 @@ class MainViewModel(
             feedbackSummaryText = _uiState.value.feedbackSummaryText,
             lastUserEmotionLabel = _uiState.value.lastUserEmotionLabel,
             guardianFeedbackTuningMessage = _uiState.value.guardianFeedbackTuningMessage,
+            weather = _uiState.value.weather,
             supportMessages = _uiState.value.supportMessages
         )
         recordHabitSample(scenario.toHabitSample(result, System.currentTimeMillis()), result)
@@ -248,7 +260,8 @@ class MainViewModel(
                 sample = sample,
                 baseline = baseline,
                 risk = modeAdjustedRisk,
-                agentResponse = agentResponse
+                agentResponse = agentResponse,
+                weather = _uiState.value.weather.eventLabel()
             )
             val emotionalState = EmotionCalibrationEngine.calibrate(
                 estimate = EmotionalStateEstimator.estimate(sample, baseline, thresholds),
@@ -268,7 +281,8 @@ class MainViewModel(
                 personalizedRisk = modeAdjustedRisk,
                 emotionalState = emotionalState,
                 trend = trend,
-                feedbackSummaryText = feedbackSummary.toDisplayText()
+                feedbackSummaryText = feedbackSummary.toDisplayText(),
+                weather = weatherRepository.current()
             )
         }
     }
@@ -630,9 +644,14 @@ class MainViewModel(
             highestRiskTimeSegment = maxEvent?.timeSegment ?: "none",
             topContributingMetrics = topMetrics,
             dataQualityLevel = quality.qualityLevel,
+            weatherContext = weatherContext(riskEvents),
             summaryText = summaryText(maxRisk, riskEvents.size, quality)
         )
     }
+
+    private fun weatherContext(events: List<RiskEventEntity>): String =
+        events.firstOrNull { it.weather.isNotBlank() && it.weather != "unknown" }?.weather
+            ?: _uiState.value.weather.displayText()
 
     private fun topContributingMetrics(events: List<RiskEventEntity>): List<String> {
         if (events.isEmpty()) return emptyList()
@@ -724,6 +743,7 @@ class MainViewModel(
             guardianFeedbackCount = 0,
             highestRiskTimeSegment = "none",
             topContributingMetrics = emptyList(),
+            weatherContext = _uiState.value.weather.displayText(),
             dataQualityLevel = "low",
             summaryText = "今日数据正在采集中。"
         )
@@ -801,12 +821,13 @@ class MainViewModel(
         private val habitRepository: HabitRepository,
         private val riskEventRepository: RiskEventRepository,
         private val therapyRepository: TherapyRepository,
+        private val weatherRepository: WeatherRepository,
         private val careModeStore: CareModeStore,
         private val guardianAgentApi: GuardianAgentApi
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            MainViewModel(habitRepository, riskEventRepository, therapyRepository, careModeStore, guardianAgentApi) as T
+            MainViewModel(habitRepository, riskEventRepository, therapyRepository, weatherRepository, careModeStore, guardianAgentApi) as T
     }
 
     private companion object {

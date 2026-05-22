@@ -10,6 +10,7 @@ data class DailyMonitoringSummary(
     val guardianFeedbackCount: Int,
     val highestRiskTimeSegment: String,
     val topContributingMetrics: List<String>,
+    val weatherContext: String,
     val dataQualityLevel: String,
     val summaryText: String
 )

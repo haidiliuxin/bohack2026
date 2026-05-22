@@ -13,6 +13,9 @@ import com.neurogarden.app.MainActivity
 import com.neurogarden.app.NeuroGardenApp
 import com.neurogarden.app.agent.AgentSignalRequest
 import com.neurogarden.app.agent.toDto
+import com.neurogarden.app.algorithm.CareMode
+import com.neurogarden.app.algorithm.CareModePolicies
+import com.neurogarden.app.algorithm.DataQualityEvaluator
 import com.neurogarden.app.algorithm.HabitLearningEngine
 import com.neurogarden.app.algorithm.PersonalizedRiskCalculator
 import com.neurogarden.app.algorithm.RiskLevel
@@ -62,6 +65,8 @@ class PassiveGuardianService : Service() {
     private suspend fun collectAndEvaluate() {
         val app = application as NeuroGardenApp
         val now = System.currentTimeMillis()
+        val mode = app.careModeStore.currentModeSnapshot()
+        val policy = CareModePolicies.policyFor(mode)
         val interaction = AccessibilitySignalStore.snapshotAndReset(this, now)
         val watchPacket = WatchSignalStore.currentPacket(this, now)
         val interactionRisk = interactionRisk(interaction)
@@ -101,8 +106,18 @@ class PassiveGuardianService : Service() {
         )
         val risk = PersonalizedRiskCalculator.calculate(sample, baseline, thresholds, agent, samples)
         val trend = TrendAnalyzer.analyze(samples, now)
+        val todayEvents = app.riskEventRepository.getTodayEvents(now)
+        val quality = DataQualityEvaluator.evaluate(samples, emptyList(), todayEvents, baseline)
+        val weather = app.weatherRepository.current()
+        app.riskEventRepository.recordIfNeeded(
+            sample = sample,
+            baseline = baseline,
+            risk = risk,
+            agentResponse = agent,
+            weather = weather.eventLabel()
+        )
         val combinedAlert = combinedAlertFor(interaction, watchPacket, interactionRisk, physiologyRisk)
-        val reason = explainEvaluation(interaction, watchPacket, interactionRisk, physiologyRisk, combinedAlert)
+        val reason = explainEvaluation(interaction, watchPacket, interactionRisk, physiologyRisk, combinedAlert, quality.qualityLevel)
 
         PassiveDebugStore.save(
             this,
@@ -117,7 +132,7 @@ class PassiveGuardianService : Service() {
                 motionLevel = watchPacket?.motionLevel ?: 0f,
                 physiologyRisk = physiologyRisk,
                 combinedRisk = combinedRisk,
-                alertAllowed = combinedAlert != null,
+                alertAllowed = combinedAlert != null && quality.qualityLevel != "low",
                 lastReason = reason
             )
         )
@@ -125,10 +140,26 @@ class PassiveGuardianService : Service() {
         combinedAlertTicks = if (combinedAlert != null) combinedAlertTicks + 1 else 0
         elevatedTicks = if (risk.riskLevel >= RiskLevel.SUPPORT || trend.shouldIntervene) elevatedTicks + 1 else 0
 
+        val notificationPlan = notificationPlanFor(mode, combinedAlert ?: risk.careMessage)
+        val maxDailyNotifications = when (mode) {
+            CareMode.SELF_MONITORING -> 4
+            else -> policy.maxDailyGuardianAlerts
+        }
+        val cooldownMs = if (mode == CareMode.SPECIAL_CARE) {
+            30L * 60L * 1000L
+        } else {
+            15L * 60L * 1000L
+        }
         if ((combinedAlertTicks >= 1 || elevatedTicks >= 2 || trend.sustainedDeviationMinutes >= 15) &&
-            NotificationPolicyStore.canNotify(this, now)
+            quality.qualityLevel != "low" &&
+            NotificationPolicyStore.canNotify(
+                context = this,
+                now = now,
+                cooldownMs = cooldownMs,
+                maxDailyNotifications = maxDailyNotifications
+            )
         ) {
-            notifySupport(combinedAlert ?: risk.careMessage)
+            notifySupport(notificationPlan.title, notificationPlan.message)
             NotificationPolicyStore.recordNotification(this, now)
             combinedAlertTicks = 0
             elevatedTicks = 0
@@ -180,8 +211,10 @@ class PassiveGuardianService : Service() {
         packet: SensorPacket?,
         interactionRisk: Float,
         physiologyRisk: Float,
-        combinedAlert: String?
+        combinedAlert: String?,
+        dataQualityLevel: String
     ): String {
+        if (dataQualityLevel == "low") return "仅记录：数据可信度 low，不升级为强提醒。"
         if (combinedAlert != null) return "满足弹窗条件：输入节奏异常 + 心率/呼吸异常 + 非运动干扰。"
         if (packet == null) return "未满足：没有真实手表数据，也没有开启模拟手表数据。"
         if (packet.motionLevel >= 0.60f) return "未满足：运动干扰过高，避免误报。"
@@ -193,6 +226,29 @@ class PassiveGuardianService : Service() {
         }
         return "未满足：输入和生理信号没有同时达到提醒条件。"
     }
+
+    private data class NotificationPlan(
+        val title: String,
+        val message: String
+    )
+
+    private fun notificationPlanFor(mode: CareMode, detail: String): NotificationPlan =
+        when (mode) {
+            CareMode.SELF_MONITORING -> NotificationPlan(
+                title = "今日状态有些波动",
+                message = "今日状态波动较明显，建议稍后查看状态摘要。$detail"
+            )
+
+            CareMode.FAMILY_GUARDIAN -> NotificationPlan(
+                title = "建议进行一次状态确认",
+                message = "检测到用户状态持续偏离日常节奏，建议进行一次状态确认。$detail"
+            )
+
+            CareMode.SPECIAL_CARE -> NotificationPlan(
+                title = "照护确认提醒",
+                message = "检测到被照护者出现持续状态偏离，建议照护者进行确认。$detail"
+            )
+        }
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -218,13 +274,13 @@ class PassiveGuardianService : Service() {
             .setPriority(Notification.PRIORITY_LOW)
             .build()
 
-    private fun notifySupport(message: String) {
+    private fun notifySupport(title: String, message: String) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(
             SUPPORT_NOTIFICATION_ID,
             Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("检测到综合状态偏离")
+                .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(Notification.BigTextStyle().bigText(message))
                 .setContentIntent(mainPendingIntent())

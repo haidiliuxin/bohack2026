@@ -8,17 +8,23 @@ object NotificationPolicyStore {
     private const val KEY_LAST_NOTIFY_AT = "last_notify_at"
     private const val KEY_NOTIFY_DAY = "notify_day"
     private const val KEY_NOTIFY_COUNT = "notify_count"
-    private const val COOLDOWN_MS = 5L * 60L * 1000L
+    private const val DEFAULT_COOLDOWN_MS = 15L * 60L * 1000L
     private const val MAX_DAILY_NOTIFICATIONS = 8
 
-    fun canNotify(context: Context, now: Long = System.currentTimeMillis()): Boolean {
+    fun canNotify(
+        context: Context,
+        now: Long = System.currentTimeMillis(),
+        cooldownMs: Long = DEFAULT_COOLDOWN_MS,
+        maxDailyNotifications: Int = MAX_DAILY_NOTIFICATIONS
+    ): Boolean {
+        if (maxDailyNotifications <= 0) return false
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val currentDay = dayOfYear(now)
         val savedDay = prefs.getInt(KEY_NOTIFY_DAY, -1)
         val count = if (savedDay == currentDay) prefs.getInt(KEY_NOTIFY_COUNT, 0) else 0
         val lastNotifyAt = prefs.getLong(KEY_LAST_NOTIFY_AT, 0L)
-        val cooldownPassed = now - lastNotifyAt >= COOLDOWN_MS
-        return cooldownPassed && count < MAX_DAILY_NOTIFICATIONS
+        val cooldownPassed = now - lastNotifyAt >= cooldownMs
+        return cooldownPassed && count < maxDailyNotifications
     }
 
     fun recordNotification(context: Context, now: Long = System.currentTimeMillis()) {
