@@ -46,17 +46,22 @@ data class AgentSignalRequest(
     val latestRiskScore: Float,
     val latestRiskLevel: String,
     val userFeedback: String?,
-    val userEmotionLabel: String? = null
+    val userEmotionLabel: String? = null,
+    val weather: String? = null,
+    val timeSegment: String? = null
 )
 
 data class AgentSignalResponse(
+    val riskScore: Float? = null,
     val riskLevel: String,
     val suggestedAction: String,
     val careMessage: String,
     val shouldNotifyGuardian: Boolean,
     val thresholdAdjustments: Map<String, Float>,
     val confidence: Float,
-    val reason: String
+    val reason: String,
+    val mainReasons: List<String> = emptyList(),
+    val metricDeviationPercent: Map<String, Float> = emptyMap()
 )
 
 data class ThresholdTuningRequest(
