@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">NeuroGarden</string>
+    <string name="accessibility_service_summary">采集输入节奏特征</string>
+    <string name="accessibility_service_description">NeuroGarden 只统计打字速度、删除频率和停顿时长等特征，不保存或上传输入文本内容。</string>
+</resources>
