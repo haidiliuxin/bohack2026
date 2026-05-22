@@ -22,6 +22,15 @@ interface RiskEventDao {
     @Query(
         """
         SELECT * FROM risk_events
+        WHERE startTime >= :dayStart AND startTime < :dayEnd
+        ORDER BY startTime DESC
+        """
+    )
+    suspend fun getRiskEventsBetween(dayStart: Long, dayEnd: Long): List<RiskEventEntity>
+
+    @Query(
+        """
+        SELECT * FROM risk_events
         WHERE startTime >= :since
         ORDER BY startTime DESC
         """

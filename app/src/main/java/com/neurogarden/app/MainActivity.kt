@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
             (application as NeuroGardenApp).habitRepository,
             (application as NeuroGardenApp).riskEventRepository,
             (application as NeuroGardenApp).repository,
+            (application as NeuroGardenApp).careModeStore,
             (application as NeuroGardenApp).guardianAgentApi
         )
     }
@@ -102,6 +103,8 @@ private fun NeuroGardenRoot(
     val recentRiskEvents by mainViewModel.recentRiskEvents.collectAsState(initial = emptyList())
     val todaySummary by mainViewModel.todaySummary.collectAsState()
     val sevenDaySummaries by mainViewModel.sevenDaySummaries.collectAsState()
+    val careMode by mainViewModel.careMode.collectAsState()
+    val careModePolicy by mainViewModel.careModePolicy.collectAsState()
     val sessions by therapyViewModel.sessions.collectAsState(initial = emptyList())
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -138,6 +141,8 @@ private fun NeuroGardenRoot(
                 recentRiskEvents = recentRiskEvents,
                 todaySummary = todaySummary,
                 sevenDaySummaries = sevenDaySummaries,
+                careMode = careMode,
+                careModePolicy = careModePolicy,
                 guardianSettings = guardianSettings,
                 onGuardianSettingsChange = { guardianSettings = it },
                 onStartPassiveGuardian = {
@@ -187,6 +192,7 @@ private fun NeuroGardenRoot(
                 observeRiskEventById = mainViewModel::observeRiskEvent,
                 onClearHabitMemory = mainViewModel::clearHabitMemory,
                 onSeedDemoMode = mainViewModel::seedDemoMode,
+                onCareModeChange = mainViewModel::setCareMode,
                 onDebugLog = { showDebugLog = true }
             )
         }

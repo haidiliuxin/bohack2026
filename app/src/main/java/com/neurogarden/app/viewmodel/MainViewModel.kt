@@ -9,6 +9,9 @@ import com.neurogarden.app.agent.SupportConversationMessageDto
 import com.neurogarden.app.agent.SupportConversationRequest
 import com.neurogarden.app.agent.ThresholdTuningRequest
 import com.neurogarden.app.agent.toDto
+import com.neurogarden.app.algorithm.CareMode
+import com.neurogarden.app.algorithm.CareModePolicies
+import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
 import com.neurogarden.app.algorithm.DataQualityEvaluator
 import com.neurogarden.app.algorithm.EmotionalStateEstimate
@@ -29,6 +32,7 @@ import com.neurogarden.app.data.local.HabitSampleEntity
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.SensorRecordEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
+import com.neurogarden.app.data.datastore.CareModeStore
 import com.neurogarden.app.data.repository.HabitRepository
 import com.neurogarden.app.data.repository.RiskEventRepository
 import com.neurogarden.app.data.repository.TherapyRepository
@@ -44,6 +48,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -81,12 +86,23 @@ class MainViewModel(
     private val habitRepository: HabitRepository,
     private val riskEventRepository: RiskEventRepository,
     private val therapyRepository: TherapyRepository,
+    private val careModeStore: CareModeStore,
     private val guardianAgentApi: GuardianAgentApi
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(RealtimeUiState())
     val uiState: StateFlow<RealtimeUiState> = _uiState.asStateFlow()
     val todayRiskEvents = riskEventRepository.observeTodayEvents()
     val recentRiskEvents = riskEventRepository.observeRecent7DayEvents()
+    val careMode: StateFlow<CareMode> = careModeStore.currentMode.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        CareMode.SELF_MONITORING
+    )
+    val careModePolicy: StateFlow<CareModePolicy> = careMode.map { CareModePolicies.policyFor(it) }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        CareModePolicies.policyFor(CareMode.SELF_MONITORING)
+    )
     private val recentHabitSamples = habitRepository.observeSamplesSince(System.currentTimeMillis() - SEVEN_DAYS_MS)
     private val recentSensorRecords = therapyRepository.observeSensorRecordsSince(System.currentTimeMillis() - SEVEN_DAYS_MS)
     val todaySummary: StateFlow<DailyMonitoringSummary> = combine(
@@ -198,12 +214,14 @@ class MainViewModel(
             val baseline = HabitLearningEngine.buildBaseline(samples, now)
             val learnedThresholds = HabitLearningEngine.buildThresholdProfile(baseline, now)
             val latestThresholds = habitRepository.getLatestThresholdProfile()
-            val thresholds = latestThresholds
+            val baseThresholds = latestThresholds
                 ?.takeIf { it.updatedBy == "guardian_feedback" || it.updatedBy == "mock_agent" }
                 ?: learnedThresholds
+            val policy = careModePolicy.value
+            val thresholds = baseThresholds.applyCareModePolicy(policy, now)
             habitRepository.saveBaseline(baseline)
-            if (latestThresholds == null || thresholds == learnedThresholds) {
-                habitRepository.saveThresholdProfile(thresholds)
+            if (latestThresholds == null || baseThresholds == learnedThresholds) {
+                habitRepository.saveThresholdProfile(baseThresholds)
             }
             val agentResponse = guardianAgentApi.analyzeSignals(
                 AgentSignalRequest(
@@ -224,10 +242,12 @@ class MainViewModel(
                 agentResponse = agentResponse,
                 recentSamples = samples
             )
+            val todayGuardianAlerts = riskEventRepository.getTodayEvents(now).count { it.guardianNotified }
+            val modeAdjustedRisk = personalizedRisk.applyCareModeNotificationPolicy(policy, todayGuardianAlerts)
             riskEventRepository.recordIfNeeded(
                 sample = sample,
                 baseline = baseline,
-                risk = personalizedRisk,
+                risk = modeAdjustedRisk,
                 agentResponse = agentResponse
             )
             val emotionalState = EmotionCalibrationEngine.calibrate(
@@ -245,7 +265,7 @@ class MainViewModel(
                 } else {
                     "当前仍使用默认阈值"
                 },
-                personalizedRisk = personalizedRisk,
+                personalizedRisk = modeAdjustedRisk,
                 emotionalState = emotionalState,
                 trend = trend,
                 feedbackSummaryText = feedbackSummary.toDisplayText()
@@ -508,6 +528,25 @@ class MainViewModel(
         }
     }
 
+    fun setCareMode(mode: CareMode) {
+        viewModelScope.launch {
+            careModeStore.setMode(mode)
+            val now = System.currentTimeMillis()
+            val current = habitRepository.getLatestThresholdProfile()
+                ?: HabitLearningEngine.defaultThresholdProfile(now)
+            val policy = CareModePolicies.policyFor(mode)
+            habitRepository.saveThresholdProfile(
+                current.copy(
+                    id = 0,
+                    guardianNotifyThreshold = policy.notificationThreshold,
+                    updatedBy = "care_mode",
+                    updatedReason = "care_mode:${mode.name}",
+                    updatedAt = now
+                )
+            )
+        }
+    }
+
     private fun ThresholdProfileEntity.applyAdjustments(
         adjustments: Map<String, Float>,
         reason: String,
@@ -529,6 +568,41 @@ class MainViewModel(
         val deleteRate: Float,
         val pauseDuration: Float
     )
+
+    private fun ThresholdProfileEntity.applyCareModePolicy(
+        policy: CareModePolicy,
+        now: Long
+    ): ThresholdProfileEntity {
+        val thresholdFactor = (1f / policy.riskSensitivity).coerceIn(0.75f, 1.25f)
+        return copy(
+            id = 0,
+            heartRateDeltaWarning = (heartRateDeltaWarning * thresholdFactor).coerceIn(8f, 42f),
+            breathRateWarning = (breathRateWarning * thresholdFactor).coerceIn(12f, 34f),
+            typingSpeedDeltaWarning = (typingSpeedDeltaWarning * thresholdFactor).coerceIn(0.12f, 0.85f),
+            deleteRateWarning = (deleteRateWarning * thresholdFactor).coerceIn(0.04f, 0.70f),
+            pauseDurationWarning = (pauseDurationWarning * thresholdFactor).coerceIn(1f, 14f),
+            guardianNotifyThreshold = policy.notificationThreshold,
+            updatedBy = "care_mode_runtime",
+            updatedReason = "runtime_policy:${policy.mode.name}",
+            updatedAt = now
+        )
+    }
+
+    private fun PersonalizedRiskResult.applyCareModeNotificationPolicy(
+        policy: CareModePolicy,
+        todayGuardianAlerts: Int
+    ): PersonalizedRiskResult {
+        val canNotifyGuardian = policy.guardianEnabledByDefault &&
+            todayGuardianAlerts < policy.maxDailyGuardianAlerts &&
+            riskScore >= policy.notificationThreshold
+        return if (canNotifyGuardian) {
+            copy(
+                guardianTriggerReason = guardianTriggerReason ?: "care_mode_threshold:${policy.mode.name}"
+            )
+        } else {
+            copy(guardianTriggerReason = null)
+        }
+    }
 
     private fun buildDailySummary(
         dayStart: Long,
@@ -727,11 +801,12 @@ class MainViewModel(
         private val habitRepository: HabitRepository,
         private val riskEventRepository: RiskEventRepository,
         private val therapyRepository: TherapyRepository,
+        private val careModeStore: CareModeStore,
         private val guardianAgentApi: GuardianAgentApi
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            MainViewModel(habitRepository, riskEventRepository, therapyRepository, guardianAgentApi) as T
+            MainViewModel(habitRepository, riskEventRepository, therapyRepository, careModeStore, guardianAgentApi) as T
     }
 
     private companion object {

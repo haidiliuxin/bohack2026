@@ -24,6 +24,9 @@ class RiskEventRepository(private val dao: RiskEventDao) {
 
     suspend fun insertEvent(event: RiskEventEntity): Long = dao.insertRiskEvent(event)
 
+    suspend fun getTodayEvents(now: Long = System.currentTimeMillis()): List<RiskEventEntity> =
+        dao.getRiskEventsBetween(now.startOfDay(), now.startOfNextDay())
+
     suspend fun recordIfNeeded(
         sample: HabitSampleEntity,
         baseline: UserHabitBaselineEntity,

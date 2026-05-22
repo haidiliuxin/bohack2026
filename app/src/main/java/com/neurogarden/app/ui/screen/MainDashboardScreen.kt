@@ -33,6 +33,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.neurogarden.app.algorithm.CareMode
+import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
@@ -58,6 +60,8 @@ fun MainDashboardScreen(
     recentRiskEvents: List<RiskEventEntity>,
     todaySummary: DailyMonitoringSummary,
     sevenDaySummaries: List<DailyMonitoringSummary>,
+    careMode: CareMode,
+    careModePolicy: CareModePolicy,
     guardianSettings: GuardianSettings,
     onGuardianSettingsChange: (GuardianSettings) -> Unit,
     onStartPassiveGuardian: () -> Unit,
@@ -71,6 +75,7 @@ fun MainDashboardScreen(
     observeRiskEventById: (Long) -> Flow<RiskEventEntity?>,
     onClearHabitMemory: () -> Unit,
     onSeedDemoMode: (String) -> Unit,
+    onCareModeChange: (CareMode) -> Unit,
     onDebugLog: () -> Unit
 ) {
     var tab by remember { mutableStateOf(MainTab.TODAY) }
@@ -116,6 +121,7 @@ fun MainDashboardScreen(
                     MainTab.TODAY -> TodayMonitorScreen(
                         realtime = realtime,
                         summary = todaySummary,
+                        careMode = careMode,
                         events = todayRiskEvents,
                         onOpenEvent = { selectedEventId = it.id },
                         onNextScenario = onContinueMock
@@ -130,6 +136,8 @@ fun MainDashboardScreen(
 
                     MainTab.GUARDIAN -> GuardianDashboardScreen(
                         settings = guardianSettings,
+                        careMode = careMode,
+                        policy = careModePolicy,
                         latestEvent = latestEvent,
                         onSettingsChange = onGuardianSettingsChange,
                         onStartPassiveGuardian = onStartPassiveGuardian,
@@ -141,6 +149,9 @@ fun MainDashboardScreen(
 
                     MainTab.SETTINGS -> SettingsDashboardScreen(
                         settings = guardianSettings,
+                        careMode = careMode,
+                        careModePolicy = careModePolicy,
+                        onCareModeChange = onCareModeChange,
                         onSettingsChange = onGuardianSettingsChange,
                         onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                         onOpenBluetoothSettings = onOpenBluetoothSettings,
@@ -159,6 +170,7 @@ fun MainDashboardScreen(
 private fun TodayMonitorScreen(
     realtime: RealtimeUiState,
     summary: DailyMonitoringSummary,
+    careMode: CareMode,
     events: List<RiskEventEntity>,
     onOpenEvent: (RiskEventEntity) -> Unit,
     onNextScenario: () -> Unit
@@ -172,34 +184,29 @@ private fun TodayMonitorScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("今日监测", style = MaterialTheme.typography.headlineMedium)
+        Text("当前模式：${careMode.toModeLabel()}", style = MaterialTheme.typography.titleMedium)
         DailySummaryCard(summary)
         ScoreCard(
-            title = "当前风险评分",
+            title = "当前状态评分",
             score = "%.2f".format(latestScore),
-            level = events.firstOrNull()?.riskLevel?.toRiskLabel() ?: realtime.personalizedRisk.riskLevel.displayName
+            level = events.firstOrNull()?.riskLevel?.toRiskLabel(careMode) ?: realtime.personalizedRisk.riskLevel.displayName
         )
-        ChartCard("今日风险评分曲线", events.toScorePoints(latestScore))
+        ChartCard("今日状态评分曲线", events.toScorePoints(latestScore))
         ChartCard("心率曲线", listOf(72f, 84f, 96f, realtime.packet.heartRate.toFloat()), maxValue = 130f)
         ChartCard("呼吸频率曲线", listOf(12f, 15f, 18f, realtime.packet.breathRate.toFloat()), maxValue = 32f)
         MetricGrid(realtime)
         Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("天气因素", style = MaterialTheme.typography.titleMedium)
-                Text(events.firstOrNull()?.weather?.takeIf { it != "unknown" } ?: "当前版本预留天气接口，默认按普通天气处理。")
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("异常事件列表", style = MaterialTheme.typography.titleMedium)
                 if (events.isEmpty()) {
-                    Text("今天还没有生成风险事件。系统会在风险评分达到观察阈值后记录事件。")
+                    Text("今天还没有生成风险事件。系统会在状态评分达到观察阈值后记录事件。")
                 } else {
                     events.forEach { event ->
                         OutlinedButton(
                             onClick = { onOpenEvent(event) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("${event.timeRangeText()} / ${event.riskLevel.toRiskLabel()} / ${"%.2f".format(event.riskScore)}")
+                            Text("${event.timeRangeText()} / ${event.riskLevel.toRiskLabel(careMode)} / ${"%.2f".format(event.riskScore)}")
                         }
                         Text(event.reasonList().joinToString("；"))
                     }
@@ -222,7 +229,7 @@ private fun DailySummaryCard(summary: DailyMonitoringSummary) {
             Text("异常事件数量：${summary.riskEventCount}")
             Text("数据可信度：${summary.dataQualityLevel.toQualityLabel()}")
             Text("主要异常指标：${summary.topContributingMetrics.ifEmpty { listOf("暂无") }.joinToString("、")}")
-            Text("监护人反馈：${summary.guardianFeedbackCount} 次，确认 ${summary.confirmedAbnormalCount} 次，误报 ${summary.falseAlarmCount} 次")
+            Text("反馈统计：${summary.guardianFeedbackCount} 次，确认 ${summary.confirmedAbnormalCount} 次，误报 ${summary.falseAlarmCount} 次")
         }
     }
 }
@@ -259,16 +266,15 @@ private fun EventDetailScreen(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("异常时间段：${event.timeRangeText()}")
-                Text("风险等级：${event.riskLevel.toRiskLabel()}")
                 Text("风险评分：${"%.2f".format(event.riskScore)}")
                 Text("置信度：${"%.0f".format(event.confidence * 100)}%")
-                Text("是否通知监护人：${if (event.guardianNotified) "建议通知" else "暂不通知"}")
-                Text("监护人反馈结果：${event.guardianFeedback ?: "暂无反馈"}")
+                Text("是否建议提醒：${if (event.guardianNotified) "是" else "否"}")
+                Text("反馈结果：${event.guardianFeedback ?: "暂无反馈"}")
             }
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Agent 分析原因", style = MaterialTheme.typography.titleMedium)
+                Text("结构化分析原因", style = MaterialTheme.typography.titleMedium)
                 event.reasonList().forEach { Text("· $it") }
                 Text("分析摘要：${event.agentAnalysis}")
                 Text("建议动作：${event.suggestedAction}")
@@ -289,11 +295,7 @@ private fun EventDetailScreen(
         GuardianFeedbackButtons(onFeedback)
         feedbackTuningMessage?.let { message ->
             Card(Modifier.fillMaxWidth()) {
-                Text(
-                    text = message,
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Text(message, modifier = Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
             }
         }
         OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
@@ -304,17 +306,10 @@ private fun EventDetailScreen(
 
 @Composable
 private fun GuardianFeedbackButtons(onFeedback: (String) -> Unit) {
-    val actions = listOf(
-        "确认异常",
-        "标记误报",
-        "已联系本人",
-        "继续观察",
-        "提高该类提醒优先级",
-        "降低该类提醒优先级"
-    )
+    val actions = listOf("确认异常", "标记误报", "已联系本人", "继续观察", "提高该类提醒优先级", "降低该类提醒优先级")
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("监护人反馈", style = MaterialTheme.typography.titleMedium)
+            Text("反馈", style = MaterialTheme.typography.titleMedium)
             actions.forEach { action ->
                 OutlinedButton(onClick = { onFeedback(action) }, modifier = Modifier.fillMaxWidth()) {
                     Text(action)
@@ -340,39 +335,22 @@ private fun HistoryDashboardScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("历史趋势", style = MaterialTheme.typography.headlineMedium)
-        ChartCard("最近 7 天风险趋势", riskEvents.toScorePoints(realtime.personalizedRisk.riskScore))
+        ChartCard("最近 7 天状态趋势", riskEvents.toScorePoints(realtime.personalizedRisk.riskScore))
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("7 天事件统计", style = MaterialTheme.typography.titleMedium)
                 Text("风险事件：${riskEvents.size} 条")
-                Text("平均风险评分：${"%.2f".format(averageRisk)}")
+                Text("平均评分：${"%.2f".format(averageRisk)}")
                 Text("误报标记：${riskEvents.count { it.isFalseAlarm }} 条")
-                Text("监护人已反馈：${riskEvents.count { it.guardianFeedback != null }} 条")
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("趋势摘要", style = MaterialTheme.typography.titleMedium)
-                Text(realtime.trend.trendLabel)
-                Text(realtime.trend.explanation)
-                Text(realtime.feedbackSummaryText)
+                Text("已反馈：${riskEvents.count { it.guardianFeedback != null }} 条")
             }
         }
         summaries.forEach { summary ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(summary.date, style = MaterialTheme.typography.titleSmall)
-                    Text("最高风险：${"%.2f".format(summary.maxRiskScore)} / 异常 ${summary.riskEventCount} 条")
+                    Text("最高评分：${"%.2f".format(summary.maxRiskScore)} / 异常 ${summary.riskEventCount} 条")
                     Text("误报 ${summary.falseAlarmCount} 条 / 确认 ${summary.confirmedAbnormalCount} 条 / 可信度 ${summary.dataQualityLevel.toQualityLabel()}")
-                }
-            }
-        }
-        riskEvents.take(8).forEach {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp)) {
-                    Text(it.timeRangeText())
-                    Text("${it.riskLevel.toRiskLabel()} / 评分 ${"%.2f".format(it.riskScore)}")
-                    Text(it.reasonList().joinToString("；"))
                 }
             }
         }
@@ -385,6 +363,8 @@ private fun HistoryDashboardScreen(
 @Composable
 private fun GuardianDashboardScreen(
     settings: GuardianSettings,
+    careMode: CareMode,
+    policy: CareModePolicy,
     latestEvent: RiskEventEntity?,
     onSettingsChange: (GuardianSettings) -> Unit,
     onStartPassiveGuardian: () -> Unit,
@@ -399,21 +379,32 @@ private fun GuardianDashboardScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("守护", style = MaterialTheme.typography.headlineMedium)
+        Text(careMode.guardianModeDescription(), style = MaterialTheme.typography.bodyMedium)
+        if (careMode == CareMode.SPECIAL_CARE) {
+            Card(Modifier.fillMaxWidth()) {
+                Text("特殊关怀模式会采用更敏感的状态偏离提醒，但仍只处理结构化统计特征，且不提供医疗诊断。", modifier = Modifier.padding(14.dp))
+            }
+        }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("监护人提醒", style = MaterialTheme.typography.titleMedium)
-                Text("当前联系人：${settings.name} / ${settings.relation}")
-                Text("提醒阈值：${"%.2f".format(settings.notifyThreshold)}")
-                Text("最近事件：${latestEvent?.let { "${it.riskLevel.toRiskLabel()} ${it.timeRangeText()}" } ?: "暂无"}")
-                Slider(
-                    value = settings.notifyThreshold,
-                    onValueChange = { onSettingsChange(settings.copy(notifyThreshold = it)) },
-                    valueRange = 0.55f..0.95f
-                )
+                Text("守护策略", style = MaterialTheme.typography.titleMedium)
+                Text("当前模式：${careMode.toModeLabel()}")
+                Text("提醒阈值：${"%.2f".format(policy.notificationThreshold)}")
+                Text("每日提醒上限：${policy.maxDailyGuardianAlerts}")
+                Text("最近事件：${latestEvent?.let { "${it.riskLevel.toRiskLabel(careMode)} ${it.timeRangeText()}" } ?: "暂无"}")
+                if (careMode != CareMode.SELF_MONITORING) {
+                    Text("当前联系人：${settings.name} / ${settings.relation}")
+                    Slider(
+                        value = settings.notifyThreshold,
+                        onValueChange = { onSettingsChange(settings.copy(notifyThreshold = it)) },
+                        valueRange = 0.55f..0.95f
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
-                        selected = settings.enabled,
+                        selected = settings.enabled && careMode != CareMode.SELF_MONITORING,
                         onClick = { onSettingsChange(settings.copy(enabled = !settings.enabled)) },
+                        enabled = careMode != CareMode.SELF_MONITORING,
                         label = { Text("授权提醒") }
                     )
                     FilterChip(
@@ -426,13 +417,22 @@ private fun GuardianDashboardScreen(
                 }
             }
         }
-        GuardianFeedbackButtons(onFeedback)
+        if (careMode == CareMode.SELF_MONITORING) {
+            Card(Modifier.fillMaxWidth()) {
+                Text("自我监测模式默认隐藏监护人提醒，只展示个人趋势和温和提醒。", modifier = Modifier.padding(14.dp))
+            }
+        } else {
+            GuardianFeedbackButtons(onFeedback)
+        }
     }
 }
 
 @Composable
 private fun SettingsDashboardScreen(
     settings: GuardianSettings,
+    careMode: CareMode,
+    careModePolicy: CareModePolicy,
+    onCareModeChange: (CareMode) -> Unit,
     onSettingsChange: (GuardianSettings) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
@@ -449,12 +449,13 @@ private fun SettingsDashboardScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("设置", style = MaterialTheme.typography.headlineMedium)
+        CareModeSelector(careMode, careModePolicy, onCareModeChange)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("隐私与权限", style = MaterialTheme.typography.titleMedium)
                 Text("不保存用户输入的完整文字，只保存打字速度、删除频率、停顿时长等统计特征。")
                 Text("Agent 只接收结构化特征，不接收原始文本。健康数据默认本地保存。")
-                Text("监护人提醒必须用户授权。本系统不是医疗诊断工具。")
+                Text("监护提醒必须用户授权。本系统不是医疗诊断工具。")
                 OutlinedButton(onClick = onOpenAccessibilitySettings, modifier = Modifier.fillMaxWidth()) {
                     Text("打开无障碍输入节奏权限")
                 }
@@ -467,20 +468,32 @@ private fun SettingsDashboardScreen(
                 OutlinedButton(onClick = onOpenBluetoothSettings, modifier = Modifier.fillMaxWidth()) { Text("打开蓝牙设置") }
             }
         }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Agent API", style = MaterialTheme.typography.titleMedium)
-                Text("Agent 分析结构化特征，输出风险评分、风险等级、置信度、主因和建议动作；不进行心理陪聊或医疗诊断。")
-                FilterChip(
-                    selected = settings.agentCareEnabled,
-                    onClick = { onSettingsChange(settings.copy(agentCareEnabled = !settings.agentCareEnabled)) },
-                    label = { Text(if (settings.agentCareEnabled) "Agent 分析已启用" else "仅本地规则") }
-                )
-            }
-        }
         DemoModeCard(onSeedDemoMode)
         OutlinedButton(onClick = onDebugLog, modifier = Modifier.fillMaxWidth()) { Text("查看采集 Debug") }
         OutlinedButton(onClick = onClearHabitMemory, modifier = Modifier.fillMaxWidth()) { Text("清除本地习惯记忆和风险事件") }
+    }
+}
+
+@Composable
+private fun CareModeSelector(
+    careMode: CareMode,
+    policy: CareModePolicy,
+    onCareModeChange: (CareMode) -> Unit
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("使用模式", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CareMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = careMode == mode,
+                        onClick = { onCareModeChange(mode) },
+                        label = { Text(mode.toModeLabel()) }
+                    )
+                }
+            }
+            Text("当前策略：敏感度 ${"%.2f".format(policy.riskSensitivity)}，通知阈值 ${"%.2f".format(policy.notificationThreshold)}，隐私级别 ${policy.privacyLevel}")
+        }
     }
 }
 
@@ -489,19 +502,11 @@ private fun DemoModeCard(onSeedDemoMode: (String) -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Demo Mode", style = MaterialTheme.typography.titleMedium)
-            Text("写入结构化模拟数据，用于演示今日摘要、历史趋势和监护人反馈调参。")
-            OutlinedButton(onClick = { onSeedDemoMode("stable_day") }, modifier = Modifier.fillMaxWidth()) {
-                Text("模拟稳定一天")
-            }
-            OutlinedButton(onClick = { onSeedDemoMode("mild_wave") }, modifier = Modifier.fillMaxWidth()) {
-                Text("模拟轻度波动")
-            }
-            OutlinedButton(onClick = { onSeedDemoMode("night_event") }, modifier = Modifier.fillMaxWidth()) {
-                Text("模拟夜间异常")
-            }
-            OutlinedButton(onClick = { onSeedDemoMode("guardian_confirmed") }, modifier = Modifier.fillMaxWidth()) {
-                Text("模拟监护人确认后调参")
-            }
+            Text("写入结构化模拟数据，用于演示今日摘要、历史趋势和反馈调参。")
+            OutlinedButton(onClick = { onSeedDemoMode("stable_day") }, modifier = Modifier.fillMaxWidth()) { Text("模拟稳定一天") }
+            OutlinedButton(onClick = { onSeedDemoMode("mild_wave") }, modifier = Modifier.fillMaxWidth()) { Text("模拟轻度波动") }
+            OutlinedButton(onClick = { onSeedDemoMode("night_event") }, modifier = Modifier.fillMaxWidth()) { Text("模拟夜间异常") }
+            OutlinedButton(onClick = { onSeedDemoMode("guardian_confirmed") }, modifier = Modifier.fillMaxWidth()) { Text("模拟监护人确认后调参") }
         }
     }
 }
@@ -554,13 +559,41 @@ private fun RiskEventEntity.timeRangeText(): String {
     }
 }
 
-private fun String.toRiskLabel(): String = when (this) {
-    "urgent_support" -> "紧急支持"
-    "guardian_check" -> "监护确认"
-    "support" -> "需要支持"
-    "observe" -> "观察"
-    "stable" -> "稳定"
-    else -> this
+private fun String.toRiskLabel(mode: CareMode = CareMode.FAMILY_GUARDIAN): String = when (mode) {
+    CareMode.SELF_MONITORING -> when (this) {
+        "urgent_support", "guardian_check", "support" -> "明显波动"
+        "observe" -> "轻度波动"
+        "stable" -> "稳定"
+        else -> this
+    }
+    CareMode.FAMILY_GUARDIAN -> when (this) {
+        "urgent_support" -> "建议立即确认"
+        "guardian_check" -> "建议确认"
+        "support" -> "守护提醒"
+        "observe" -> "观察"
+        "stable" -> "稳定"
+        else -> this
+    }
+    CareMode.SPECIAL_CARE -> when (this) {
+        "urgent_support" -> "照护确认"
+        "guardian_check" -> "状态偏离提醒"
+        "support" -> "照护观察"
+        "observe" -> "轻度偏离"
+        "stable" -> "稳定"
+        else -> this
+    }
+}
+
+private fun CareMode.toModeLabel(): String = when (this) {
+    CareMode.SELF_MONITORING -> "自我监测"
+    CareMode.FAMILY_GUARDIAN -> "家庭守护"
+    CareMode.SPECIAL_CARE -> "特殊关怀"
+}
+
+private fun CareMode.guardianModeDescription(): String = when (this) {
+    CareMode.SELF_MONITORING -> "当前为自我监测模式，默认不通知监护人，提醒文案更温和。"
+    CareMode.FAMILY_GUARDIAN -> "当前为家庭守护模式，可使用守护提醒和反馈调参。"
+    CareMode.SPECIAL_CARE -> "当前为特殊关怀模式，提醒更敏感，同时限制每日提醒次数并强化隐私提示。"
 }
 
 private fun String.toQualityLabel(): String = when (this) {
