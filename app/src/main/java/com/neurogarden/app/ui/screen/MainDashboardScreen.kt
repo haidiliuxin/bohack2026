@@ -474,6 +474,9 @@ private fun SettingsDashboardScreen(
                 Text("不保存用户输入的完整文字，只保存打字速度、删除频率、停顿时长等统计特征。")
                 Text("Agent 只接收结构化特征，不接收原始文本。健康数据默认本地保存。")
                 Text("监护提醒必须用户授权。本系统不是医疗诊断工具。")
+                Text("健康权限：用于心率、呼吸、运动状态和 Wear OS 数据。")
+                Text("通知权限：用于本地波动提醒、守护确认和照护确认。")
+                Text("网络权限：用于天气数据、Agent API 和可选远程分析；失败时会本地兜底。")
                 OutlinedButton(onClick = onOpenAccessibilitySettings, modifier = Modifier.fillMaxWidth()) {
                     Text("打开无障碍输入节奏权限")
                 }
