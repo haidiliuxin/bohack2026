@@ -21,6 +21,8 @@ class HabitRepository(private val dao: HabitDao) {
     suspend fun getSamplesSince(since: Long): List<HabitSampleEntity> =
         dao.getSamplesSince(since)
 
+    fun observeSamplesSince(since: Long) = dao.observeSamplesSince(since)
+
     suspend fun saveBaseline(baseline: UserHabitBaselineEntity): Long =
         dao.insertBaseline(baseline)
 

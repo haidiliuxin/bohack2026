@@ -31,6 +31,9 @@ interface RiskEventDao {
     @Query("SELECT * FROM risk_events WHERE id = :id LIMIT 1")
     fun observeRiskEventById(id: Long): Flow<RiskEventEntity?>
 
+    @Query("SELECT * FROM risk_events WHERE id = :id LIMIT 1")
+    suspend fun getRiskEventById(id: Long): RiskEventEntity?
+
     @Query(
         """
         SELECT * FROM risk_events

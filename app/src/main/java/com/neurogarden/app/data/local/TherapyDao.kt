@@ -15,4 +15,7 @@ interface TherapyDao {
 
     @Insert
     suspend fun insertSensorRecord(record: SensorRecordEntity)
+
+    @Query("SELECT * FROM sensor_records WHERE timestamp >= :since ORDER BY timestamp DESC")
+    fun observeSensorRecordsSince(since: Long): Flow<List<SensorRecordEntity>>
 }

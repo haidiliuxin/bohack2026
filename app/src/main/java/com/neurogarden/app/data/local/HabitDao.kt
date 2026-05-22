@@ -17,6 +17,9 @@ interface HabitDao {
     @Query("SELECT * FROM habit_samples WHERE timestamp >= :since ORDER BY timestamp DESC")
     suspend fun getSamplesSince(since: Long): List<HabitSampleEntity>
 
+    @Query("SELECT * FROM habit_samples WHERE timestamp >= :since ORDER BY timestamp DESC")
+    fun observeSamplesSince(since: Long): Flow<List<HabitSampleEntity>>
+
     @Query("SELECT * FROM habit_samples ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentSamples(limit: Int): List<HabitSampleEntity>
 

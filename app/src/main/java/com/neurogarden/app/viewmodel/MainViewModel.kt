@@ -9,9 +9,12 @@ import com.neurogarden.app.agent.SupportConversationMessageDto
 import com.neurogarden.app.agent.SupportConversationRequest
 import com.neurogarden.app.agent.ThresholdTuningRequest
 import com.neurogarden.app.agent.toDto
+import com.neurogarden.app.algorithm.DailyMonitoringSummary
+import com.neurogarden.app.algorithm.DataQualityEvaluator
 import com.neurogarden.app.algorithm.EmotionalStateEstimate
 import com.neurogarden.app.algorithm.EmotionCalibrationEngine
 import com.neurogarden.app.algorithm.EmotionalStateEstimator
+import com.neurogarden.app.algorithm.FeedbackTuningEngine
 import com.neurogarden.app.algorithm.HabitLearningEngine
 import com.neurogarden.app.algorithm.HabitLearningWindow
 import com.neurogarden.app.algorithm.PersonalizedRiskCalculator
@@ -23,15 +26,25 @@ import com.neurogarden.app.algorithm.TrendAssessment
 import com.neurogarden.app.data.local.FeedbackRecordEntity
 import com.neurogarden.app.data.local.ConversationSummaryEntity
 import com.neurogarden.app.data.local.HabitSampleEntity
+import com.neurogarden.app.data.local.RiskEventEntity
+import com.neurogarden.app.data.local.SensorRecordEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.app.data.repository.HabitRepository
 import com.neurogarden.app.data.repository.RiskEventRepository
+import com.neurogarden.app.data.repository.TherapyRepository
 import com.neurogarden.app.sensor.MockScenario
 import com.neurogarden.shared.model.SensorPacket
 import com.neurogarden.shared.model.StressResult
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 data class RealtimeUiState(
@@ -55,6 +68,7 @@ data class RealtimeUiState(
     val trend: TrendAssessment = TrendAssessment.empty(),
     val feedbackSummaryText: String = "还没有足够反馈来评估提醒准确性",
     val lastUserEmotionLabel: String? = null,
+    val guardianFeedbackTuningMessage: String? = null,
     val supportMessages: List<SupportMessage> = emptyList()
 )
 
@@ -66,12 +80,53 @@ data class SupportMessage(
 class MainViewModel(
     private val habitRepository: HabitRepository,
     private val riskEventRepository: RiskEventRepository,
+    private val therapyRepository: TherapyRepository,
     private val guardianAgentApi: GuardianAgentApi
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(RealtimeUiState())
     val uiState: StateFlow<RealtimeUiState> = _uiState.asStateFlow()
     val todayRiskEvents = riskEventRepository.observeTodayEvents()
     val recentRiskEvents = riskEventRepository.observeRecent7DayEvents()
+    private val recentHabitSamples = habitRepository.observeSamplesSince(System.currentTimeMillis() - SEVEN_DAYS_MS)
+    private val recentSensorRecords = therapyRepository.observeSensorRecordsSince(System.currentTimeMillis() - SEVEN_DAYS_MS)
+    val todaySummary: StateFlow<DailyMonitoringSummary> = combine(
+        todayRiskEvents,
+        recentHabitSamples,
+        recentSensorRecords,
+        habitRepository.latestBaseline
+    ) { events, samples, sensors, baseline ->
+        val todayStart = System.currentTimeMillis().startOfDay()
+        buildDailySummary(
+            dayStart = todayStart,
+            riskEvents = events,
+            habitSamples = samples.filter { it.timestamp >= todayStart },
+            sensorRecords = sensors.filter { it.timestamp >= todayStart },
+            baseline = baseline
+        )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        emptyDailySummary()
+    )
+    val sevenDaySummaries: StateFlow<List<DailyMonitoringSummary>> = combine(
+        recentRiskEvents,
+        recentHabitSamples,
+        recentSensorRecords,
+        habitRepository.latestBaseline
+    ) { events, samples, sensors, baseline ->
+        val todayStart = System.currentTimeMillis().startOfDay()
+        (6 downTo 0).map { offset ->
+            val dayStart = todayStart - offset * DAY_MS
+            val dayEnd = dayStart + DAY_MS
+            buildDailySummary(
+                dayStart = dayStart,
+                riskEvents = events.filter { it.startTime in dayStart until dayEnd },
+                habitSamples = samples.filter { it.timestamp in dayStart until dayEnd },
+                sensorRecords = sensors.filter { it.timestamp in dayStart until dayEnd },
+                baseline = baseline
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun observeRiskEvent(id: Long) = riskEventRepository.observeEventById(id)
 
@@ -109,6 +164,7 @@ class MainViewModel(
             trend = _uiState.value.trend,
             feedbackSummaryText = _uiState.value.feedbackSummaryText,
             lastUserEmotionLabel = _uiState.value.lastUserEmotionLabel,
+            guardianFeedbackTuningMessage = _uiState.value.guardianFeedbackTuningMessage,
             supportMessages = _uiState.value.supportMessages
         )
         recordHabitSample(scenario.toHabitSample(result, System.currentTimeMillis()), result)
@@ -140,9 +196,15 @@ class MainViewModel(
                 HabitLearningEngine.windowStart(now, HabitLearningWindow.THIRTY_DAYS)
             )
             val baseline = HabitLearningEngine.buildBaseline(samples, now)
-            val thresholds = HabitLearningEngine.buildThresholdProfile(baseline, now)
+            val learnedThresholds = HabitLearningEngine.buildThresholdProfile(baseline, now)
+            val latestThresholds = habitRepository.getLatestThresholdProfile()
+            val thresholds = latestThresholds
+                ?.takeIf { it.updatedBy == "guardian_feedback" || it.updatedBy == "mock_agent" }
+                ?: learnedThresholds
             habitRepository.saveBaseline(baseline)
-            habitRepository.saveThresholdProfile(thresholds)
+            if (latestThresholds == null || thresholds == learnedThresholds) {
+                habitRepository.saveThresholdProfile(thresholds)
+            }
             val agentResponse = guardianAgentApi.analyzeSignals(
                 AgentSignalRequest(
                     userId = "local-demo-user",
@@ -280,7 +342,35 @@ class MainViewModel(
     fun submitGuardianFeedback(eventId: Long, feedback: String) {
         viewModelScope.launch {
             riskEventRepository.updateGuardianFeedback(eventId, feedback)
-            submitFeedback(feedback)
+            val event = riskEventRepository.getEventById(eventId)
+            val currentThresholds = habitRepository.getLatestThresholdProfile()
+                ?: HabitLearningEngine.defaultThresholdProfile(System.currentTimeMillis())
+            val tuning = event?.let {
+                FeedbackTuningEngine.tune(
+                    event = it,
+                    guardianFeedback = feedback,
+                    current = currentThresholds
+                )
+            }
+            if (tuning != null) {
+                habitRepository.saveThresholdProfile(tuning.updatedProfile)
+            }
+            val now = System.currentTimeMillis()
+            habitRepository.saveFeedback(
+                FeedbackRecordEntity(
+                    timestamp = now,
+                    predictedRiskLevel = event?.riskLevel ?: _uiState.value.personalizedRisk.riskLevel.name.lowercase(),
+                    predictedState = _uiState.value.emotionalState.primaryState,
+                    userLabel = feedback.toUserLabel(),
+                    timingFeedback = feedback.toTimingFeedback(),
+                    helpful = feedback != "标记误报",
+                    source = "guardian_dashboard",
+                    createdAt = now
+                )
+            )
+            _uiState.value = _uiState.value.copy(
+                guardianFeedbackTuningMessage = tuning?.message ?: "已记录监护人反馈。"
+            )
         }
     }
 
@@ -379,6 +469,45 @@ class MainViewModel(
         }
     }
 
+    fun seedDemoMode(mode: String) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val todayStart = now.startOfDay()
+            val profile = habitRepository.getLatestThresholdProfile()
+                ?: HabitLearningEngine.defaultThresholdProfile(now)
+            val samples = demoSamples(mode, todayStart)
+            samples.forEach { sample ->
+                habitRepository.saveSample(sample)
+                therapyRepository.saveSensorRecord(
+                    SensorRecordEntity(
+                        timestamp = sample.timestamp,
+                        heartRate = sample.heartRate,
+                        breathRate = sample.breathRate,
+                        motionLevel = sample.motionLevel,
+                        stressScore = when (mode) {
+                            "stable_day" -> 0.18f
+                            "mild_wave" -> 0.42f
+                            else -> 0.72f
+                        },
+                        confidence = 0.76f,
+                        state = sample.riskLevel
+                    )
+                )
+            }
+            val event = demoRiskEvent(mode, todayStart)
+            if (event != null) {
+                val eventId = riskEventRepository.insertEvent(event)
+                if (mode == "guardian_confirmed") {
+                    val saved = event.copy(id = eventId, guardianFeedback = "确认异常")
+                    val tuning = FeedbackTuningEngine.tune(saved, "确认异常", profile)
+                    riskEventRepository.updateGuardianFeedback(eventId, "确认异常")
+                    habitRepository.saveThresholdProfile(tuning.updatedProfile)
+                    _uiState.value = _uiState.value.copy(guardianFeedbackTuningMessage = tuning.message)
+                }
+            }
+        }
+    }
+
     private fun ThresholdProfileEntity.applyAdjustments(
         adjustments: Map<String, Float>,
         reason: String,
@@ -400,6 +529,130 @@ class MainViewModel(
         val deleteRate: Float,
         val pauseDuration: Float
     )
+
+    private fun buildDailySummary(
+        dayStart: Long,
+        riskEvents: List<RiskEventEntity>,
+        habitSamples: List<HabitSampleEntity>,
+        sensorRecords: List<SensorRecordEntity>,
+        baseline: com.neurogarden.app.data.local.UserHabitBaselineEntity?
+    ): DailyMonitoringSummary {
+        val quality = DataQualityEvaluator.evaluate(habitSamples, sensorRecords, riskEvents, baseline)
+        val maxEvent = riskEvents.maxByOrNull { it.riskScore }
+        val scores = riskEvents.map { it.riskScore }
+        val topMetrics = topContributingMetrics(riskEvents)
+        val confirmed = riskEvents.count { it.guardianFeedback?.contains("确认") == true || it.guardianFeedback?.contains("纭") == true }
+        val falseAlarms = riskEvents.count { it.isFalseAlarm }
+        val feedbackCount = riskEvents.count { it.guardianFeedback != null }
+        val maxRisk = scores.maxOrNull() ?: 0f
+        return DailyMonitoringSummary(
+            date = SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date(dayStart)),
+            maxRiskScore = maxRisk,
+            averageRiskScore = scores.average().takeIf { !it.isNaN() }?.toFloat() ?: 0f,
+            riskEventCount = riskEvents.size,
+            confirmedAbnormalCount = confirmed,
+            falseAlarmCount = falseAlarms,
+            guardianFeedbackCount = feedbackCount,
+            highestRiskTimeSegment = maxEvent?.timeSegment ?: "none",
+            topContributingMetrics = topMetrics,
+            dataQualityLevel = quality.qualityLevel,
+            summaryText = summaryText(maxRisk, riskEvents.size, quality)
+        )
+    }
+
+    private fun topContributingMetrics(events: List<RiskEventEntity>): List<String> {
+        if (events.isEmpty()) return emptyList()
+        val totals = mapOf(
+            "心率" to events.map { kotlin.math.abs(it.heartRateDeviationPercent) }.average().toFloat(),
+            "呼吸" to events.map { kotlin.math.abs(it.breathRateDeviationPercent) }.average().toFloat(),
+            "打字速度" to events.map { kotlin.math.abs(it.typingSpeedDeviationPercent) }.average().toFloat(),
+            "删除频率" to events.map { kotlin.math.abs(it.deleteRateDeviationPercent) }.average().toFloat(),
+            "停顿时长" to events.map { kotlin.math.abs(it.pauseDurationDeviationPercent) }.average().toFloat()
+        )
+        return totals.entries.sortedByDescending { it.value }.take(3).map { it.key }
+    }
+
+    private fun summaryText(maxRisk: Float, eventCount: Int, quality: com.neurogarden.app.algorithm.DataQualityResult): String =
+        when {
+            quality.qualityLevel == "low" -> "今日数据仍不完整，当前结果仅作观察参考。"
+            eventCount == 0 -> "今日未记录明显风险事件，整体状态较稳定。"
+            maxRisk >= 0.75f -> "今日出现较高风险波动，建议关注异常事件详情和监护反馈。"
+            else -> "今日存在轻度波动，系统已记录结构化指标用于后续个体化判断。"
+        }
+
+    private fun demoSamples(mode: String, dayStart: Long): List<HabitSampleEntity> {
+        val count = if (mode == "stable_day") 12 else 10
+        return (0 until count).map { index ->
+            val elevated = mode != "stable_day" && index >= count - 3
+            HabitSampleEntity(
+                timestamp = dayStart + (9 + index) * 60L * 60L * 1000L,
+                heartRate = if (elevated) 98 + index else 70 + index % 4,
+                breathRate = if (elevated) 19 + index % 3 else 11 + index % 2,
+                motionLevel = if (mode == "mild_wave") 0.22f else 0.10f,
+                typingSpeed = if (elevated) 64f else 112f,
+                deleteRate = if (elevated) 0.18f else 0.04f,
+                pauseDuration = if (elevated) 4.2f else 1.3f,
+                userFeedback = null,
+                contextTag = "demo_$mode",
+                riskLevel = if (elevated) "observe" else "stable",
+                createdAt = System.currentTimeMillis()
+            )
+        }
+    }
+
+    private fun demoRiskEvent(mode: String, dayStart: Long): RiskEventEntity? {
+        if (mode == "stable_day") return null
+        val start = when (mode) {
+            "night_event" -> dayStart + 23L * 60L * 60L * 1000L
+            else -> dayStart + 15L * 60L * 60L * 1000L
+        }
+        return RiskEventEntity(
+            startTime = start,
+            endTime = start + 12L * 60L * 1000L,
+            riskScore = if (mode == "mild_wave") 0.48f else 0.76f,
+            riskLevel = if (mode == "mild_wave") "observe" else "guardian_check",
+            confidence = 0.78f,
+            mainReasons = "心率高于个人基线|呼吸频率高于个人基线|停顿时长增加",
+            metricDeviationPercent = "heartRate=32.0;breathRate=58.0;typingSpeed=-36.0;deleteRate=180.0;pauseDuration=160.0",
+            heartRateDeviationPercent = 32f,
+            breathRateDeviationPercent = 58f,
+            typingSpeedDeviationPercent = -36f,
+            deleteRateDeviationPercent = 180f,
+            pauseDurationDeviationPercent = 160f,
+            motionLevel = 0.10f,
+            weather = "normal",
+            timeSegment = if (mode == "night_event") "night" else "afternoon",
+            agentAnalysis = "source=demo_rule;reasons=structured_demo_features",
+            suggestedAction = "建议查看事件详情并确认是否需要监护人反馈。",
+            guardianNotified = mode != "mild_wave",
+            guardianFeedback = if (mode == "guardian_confirmed") "确认异常" else null,
+            isFalseAlarm = false,
+            createdAt = System.currentTimeMillis()
+        )
+    }
+
+    private fun Long.startOfDay(): Long = Calendar.getInstance().apply {
+        timeInMillis = this@startOfDay
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    private fun emptyDailySummary(): DailyMonitoringSummary =
+        DailyMonitoringSummary(
+            date = SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date()),
+            maxRiskScore = 0f,
+            averageRiskScore = 0f,
+            riskEventCount = 0,
+            confirmedAbnormalCount = 0,
+            falseAlarmCount = 0,
+            guardianFeedbackCount = 0,
+            highestRiskTimeSegment = "none",
+            topContributingMetrics = emptyList(),
+            dataQualityLevel = "low",
+            summaryText = "今日数据正在采集中。"
+        )
 
     private fun String.toDisplayName(): String = when (this) {
         "high" -> "高"
@@ -473,10 +726,16 @@ class MainViewModel(
     class Factory(
         private val habitRepository: HabitRepository,
         private val riskEventRepository: RiskEventRepository,
+        private val therapyRepository: TherapyRepository,
         private val guardianAgentApi: GuardianAgentApi
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            MainViewModel(habitRepository, riskEventRepository, guardianAgentApi) as T
+            MainViewModel(habitRepository, riskEventRepository, therapyRepository, guardianAgentApi) as T
+    }
+
+    private companion object {
+        const val DAY_MS = 24L * 60L * 60L * 1000L
+        const val SEVEN_DAYS_MS = 7L * DAY_MS
     }
 }

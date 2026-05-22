@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.neurogarden.app.algorithm.DailyMonitoringSummary
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
 import com.neurogarden.app.viewmodel.RealtimeUiState
@@ -55,6 +56,8 @@ fun MainDashboardScreen(
     sessions: List<TherapySessionEntity>,
     todayRiskEvents: List<RiskEventEntity>,
     recentRiskEvents: List<RiskEventEntity>,
+    todaySummary: DailyMonitoringSummary,
+    sevenDaySummaries: List<DailyMonitoringSummary>,
     guardianSettings: GuardianSettings,
     onGuardianSettingsChange: (GuardianSettings) -> Unit,
     onStartPassiveGuardian: () -> Unit,
@@ -67,6 +70,7 @@ fun MainDashboardScreen(
     onEventFeedback: (Long, String) -> Unit,
     observeRiskEventById: (Long) -> Flow<RiskEventEntity?>,
     onClearHabitMemory: () -> Unit,
+    onSeedDemoMode: (String) -> Unit,
     onDebugLog: () -> Unit
 ) {
     var tab by remember { mutableStateOf(MainTab.TODAY) }
@@ -103,6 +107,7 @@ fun MainDashboardScreen(
             if (selectedEvent != null) {
                 EventDetailScreen(
                     event = selectedEvent,
+                    feedbackTuningMessage = realtime.guardianFeedbackTuningMessage,
                     onBack = { selectedEventId = null },
                     onFeedback = { feedback -> onEventFeedback(selectedEvent.id, feedback) }
                 )
@@ -110,6 +115,7 @@ fun MainDashboardScreen(
                 when (tab) {
                     MainTab.TODAY -> TodayMonitorScreen(
                         realtime = realtime,
+                        summary = todaySummary,
                         events = todayRiskEvents,
                         onOpenEvent = { selectedEventId = it.id },
                         onNextScenario = onContinueMock
@@ -118,7 +124,8 @@ fun MainDashboardScreen(
                     MainTab.HISTORY -> HistoryDashboardScreen(
                         realtime = realtime,
                         sessions = sessions,
-                        riskEvents = recentRiskEvents
+                        riskEvents = recentRiskEvents,
+                        summaries = sevenDaySummaries
                     )
 
                     MainTab.GUARDIAN -> GuardianDashboardScreen(
@@ -139,6 +146,7 @@ fun MainDashboardScreen(
                         onOpenBluetoothSettings = onOpenBluetoothSettings,
                         onConnectWear = onConnectWear,
                         onClearHabitMemory = onClearHabitMemory,
+                        onSeedDemoMode = onSeedDemoMode,
                         onDebugLog = onDebugLog
                     )
                 }
@@ -150,6 +158,7 @@ fun MainDashboardScreen(
 @Composable
 private fun TodayMonitorScreen(
     realtime: RealtimeUiState,
+    summary: DailyMonitoringSummary,
     events: List<RiskEventEntity>,
     onOpenEvent: (RiskEventEntity) -> Unit,
     onNextScenario: () -> Unit
@@ -163,6 +172,7 @@ private fun TodayMonitorScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("今日监测", style = MaterialTheme.typography.headlineMedium)
+        DailySummaryCard(summary)
         ScoreCard(
             title = "当前风险评分",
             score = "%.2f".format(latestScore),
@@ -203,6 +213,21 @@ private fun TodayMonitorScreen(
 }
 
 @Composable
+private fun DailySummaryCard(summary: DailyMonitoringSummary) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("今日摘要", style = MaterialTheme.typography.titleMedium)
+            Text(summary.summaryText)
+            Text("最高风险时段：${summary.highestRiskTimeSegment.toSegmentLabel()}")
+            Text("异常事件数量：${summary.riskEventCount}")
+            Text("数据可信度：${summary.dataQualityLevel.toQualityLabel()}")
+            Text("主要异常指标：${summary.topContributingMetrics.ifEmpty { listOf("暂无") }.joinToString("、")}")
+            Text("监护人反馈：${summary.guardianFeedbackCount} 次，确认 ${summary.confirmedAbnormalCount} 次，误报 ${summary.falseAlarmCount} 次")
+        }
+    }
+}
+
+@Composable
 private fun MetricGrid(realtime: RealtimeUiState) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -219,6 +244,7 @@ private fun MetricGrid(realtime: RealtimeUiState) {
 @Composable
 private fun EventDetailScreen(
     event: RiskEventEntity,
+    feedbackTuningMessage: String?,
     onBack: () -> Unit,
     onFeedback: (String) -> Unit
 ) {
@@ -261,6 +287,15 @@ private fun EventDetailScreen(
             }
         }
         GuardianFeedbackButtons(onFeedback)
+        feedbackTuningMessage?.let { message ->
+            Card(Modifier.fillMaxWidth()) {
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(14.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
         OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
             Text("返回今日")
         }
@@ -293,7 +328,8 @@ private fun GuardianFeedbackButtons(onFeedback: (String) -> Unit) {
 private fun HistoryDashboardScreen(
     realtime: RealtimeUiState,
     sessions: List<TherapySessionEntity>,
-    riskEvents: List<RiskEventEntity>
+    riskEvents: List<RiskEventEntity>,
+    summaries: List<DailyMonitoringSummary>
 ) {
     val averageRisk = riskEvents.map { it.riskScore }.average().takeIf { !it.isNaN() }?.toFloat() ?: 0f
     Column(
@@ -320,6 +356,15 @@ private fun HistoryDashboardScreen(
                 Text(realtime.trend.trendLabel)
                 Text(realtime.trend.explanation)
                 Text(realtime.feedbackSummaryText)
+            }
+        }
+        summaries.forEach { summary ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(summary.date, style = MaterialTheme.typography.titleSmall)
+                    Text("最高风险：${"%.2f".format(summary.maxRiskScore)} / 异常 ${summary.riskEventCount} 条")
+                    Text("误报 ${summary.falseAlarmCount} 条 / 确认 ${summary.confirmedAbnormalCount} 条 / 可信度 ${summary.dataQualityLevel.toQualityLabel()}")
+                }
             }
         }
         riskEvents.take(8).forEach {
@@ -393,6 +438,7 @@ private fun SettingsDashboardScreen(
     onOpenBluetoothSettings: () -> Unit,
     onConnectWear: () -> Unit,
     onClearHabitMemory: () -> Unit,
+    onSeedDemoMode: (String) -> Unit,
     onDebugLog: () -> Unit
 ) {
     Column(
@@ -432,8 +478,31 @@ private fun SettingsDashboardScreen(
                 )
             }
         }
+        DemoModeCard(onSeedDemoMode)
         OutlinedButton(onClick = onDebugLog, modifier = Modifier.fillMaxWidth()) { Text("查看采集 Debug") }
         OutlinedButton(onClick = onClearHabitMemory, modifier = Modifier.fillMaxWidth()) { Text("清除本地习惯记忆和风险事件") }
+    }
+}
+
+@Composable
+private fun DemoModeCard(onSeedDemoMode: (String) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Demo Mode", style = MaterialTheme.typography.titleMedium)
+            Text("写入结构化模拟数据，用于演示今日摘要、历史趋势和监护人反馈调参。")
+            OutlinedButton(onClick = { onSeedDemoMode("stable_day") }, modifier = Modifier.fillMaxWidth()) {
+                Text("模拟稳定一天")
+            }
+            OutlinedButton(onClick = { onSeedDemoMode("mild_wave") }, modifier = Modifier.fillMaxWidth()) {
+                Text("模拟轻度波动")
+            }
+            OutlinedButton(onClick = { onSeedDemoMode("night_event") }, modifier = Modifier.fillMaxWidth()) {
+                Text("模拟夜间异常")
+            }
+            OutlinedButton(onClick = { onSeedDemoMode("guardian_confirmed") }, modifier = Modifier.fillMaxWidth()) {
+                Text("模拟监护人确认后调参")
+            }
+        }
     }
 }
 
@@ -491,6 +560,22 @@ private fun String.toRiskLabel(): String = when (this) {
     "support" -> "需要支持"
     "observe" -> "观察"
     "stable" -> "稳定"
+    else -> this
+}
+
+private fun String.toQualityLabel(): String = when (this) {
+    "high" -> "高"
+    "medium" -> "中"
+    "low" -> "低"
+    else -> this
+}
+
+private fun String.toSegmentLabel(): String = when (this) {
+    "late_night" -> "凌晨"
+    "morning" -> "上午"
+    "afternoon" -> "下午"
+    "night" -> "夜间"
+    "none" -> "暂无"
     else -> this
 }
 

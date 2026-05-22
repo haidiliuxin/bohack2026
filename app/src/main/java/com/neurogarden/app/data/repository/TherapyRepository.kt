@@ -9,4 +9,5 @@ class TherapyRepository(private val dao: TherapyDao) {
 
     suspend fun saveSession(session: TherapySessionEntity) = dao.insertSession(session)
     suspend fun saveSensorRecord(record: SensorRecordEntity) = dao.insertSensorRecord(record)
+    fun observeSensorRecordsSince(since: Long) = dao.observeSensorRecordsSince(since)
 }

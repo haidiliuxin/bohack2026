@@ -20,6 +20,10 @@ class RiskEventRepository(private val dao: RiskEventDao) {
 
     fun observeEventById(id: Long) = dao.observeRiskEventById(id)
 
+    suspend fun getEventById(id: Long): RiskEventEntity? = dao.getRiskEventById(id)
+
+    suspend fun insertEvent(event: RiskEventEntity): Long = dao.insertRiskEvent(event)
+
     suspend fun recordIfNeeded(
         sample: HabitSampleEntity,
         baseline: UserHabitBaselineEntity,
@@ -60,6 +64,7 @@ class RiskEventRepository(private val dao: RiskEventDao) {
             riskLevel = event.riskLevel
         )
         if (candidate != null && hasSimilarReasons(candidate.mainReasons, event.mainReasons)) {
+            if (candidate.guardianFeedback?.isContactedFeedback() == true) return
             dao.mergeRiskEvent(
                 id = candidate.id,
                 endTime = now,
@@ -77,7 +82,7 @@ class RiskEventRepository(private val dao: RiskEventDao) {
     }
 
     suspend fun updateGuardianFeedback(id: Long, feedback: String) {
-        val isFalseAlarm = feedback == "标记误报"
+        val isFalseAlarm = feedback.contains("误报") || feedback.contains("璇姤")
         if (isFalseAlarm) {
             dao.markFalseAlarm(id, feedback)
         } else {
@@ -150,6 +155,9 @@ class RiskEventRepository(private val dao: RiskEventDao) {
 
     private fun Map<String, Float>.toMetricString(): String =
         entries.joinToString(";") { (key, value) -> "$key=${"%.1f".format(value)}" }
+
+    private fun String.isContactedFeedback(): Boolean =
+        contains("已联系") || contains("宸茶仈绯")
 
     private fun Long.startOfDay(): Long = Calendar.getInstance().apply {
         timeInMillis = this@startOfDay
