@@ -30,6 +30,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Calendar
 import kotlin.math.max
 import kotlin.math.min
 
@@ -93,6 +94,7 @@ class PassiveGuardianService : Service() {
             ?: HabitLearningEngine.buildBaseline(samples, now)
         val thresholds = app.habitRepository.getLatestThresholdProfile()
             ?: HabitLearningEngine.buildThresholdProfile(baseline, now)
+        val weather = app.weatherRepository.current()
         val agent = app.guardianAgentApi.analyzeSignals(
             AgentSignalRequest(
                 userId = "local-demo-user",
@@ -101,14 +103,15 @@ class PassiveGuardianService : Service() {
                 currentThresholds = thresholds.toDto(),
                 latestRiskScore = combinedRisk,
                 latestRiskLevel = "observe",
-                userFeedback = null
+                userFeedback = null,
+                weather = weather.eventLabel(),
+                timeSegment = now.timeSegment()
             )
         )
         val risk = PersonalizedRiskCalculator.calculate(sample, baseline, thresholds, agent, samples)
         val trend = TrendAnalyzer.analyze(samples, now)
         val todayEvents = app.riskEventRepository.getTodayEvents(now)
         val quality = DataQualityEvaluator.evaluate(samples, emptyList(), todayEvents, baseline)
-        val weather = app.weatherRepository.current()
         app.riskEventRepository.recordIfNeeded(
             sample = sample,
             baseline = baseline,
@@ -284,6 +287,8 @@ class PassiveGuardianService : Service() {
                 .setContentText(message)
                 .setStyle(Notification.BigTextStyle().bigText(message))
                 .setContentIntent(mainPendingIntent())
+                .setDefaults(Notification.DEFAULT_ALL)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setAutoCancel(true)
                 .setPriority(Notification.PRIORITY_HIGH)
                 .setCategory(Notification.CATEGORY_REMINDER)
@@ -299,6 +304,17 @@ class PassiveGuardianService : Service() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
+
+    private fun Long.timeSegment(): String {
+        val hour = Calendar.getInstance().apply { timeInMillis = this@timeSegment }
+            .get(Calendar.HOUR_OF_DAY)
+        return when (hour) {
+            in 0..5 -> "late_night"
+            in 6..11 -> "morning"
+            in 12..17 -> "afternoon"
+            else -> "night"
+        }
     }
 
     companion object {

@@ -54,6 +54,12 @@ data class AgentSignalRequest(
 data class AgentSignalResponse(
     val riskScore: Float? = null,
     val riskLevel: String,
+    val emotionalState: String? = null,
+    val arousalScore: Float? = null,
+    val valenceScore: Float? = null,
+    val fatigueScore: Float? = null,
+    val lonelinessScore: Float? = null,
+    val stressScore: Float? = null,
     val suggestedAction: String,
     val careMessage: String,
     val shouldNotifyGuardian: Boolean,

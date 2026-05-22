@@ -23,6 +23,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,10 +40,13 @@ import androidx.compose.ui.unit.dp
 import com.neurogarden.app.algorithm.CareMode
 import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
+import com.neurogarden.app.algorithm.DiscomfortBoundaryCalculator
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
 import com.neurogarden.app.passive.AccessibilitySignalStore
+import com.neurogarden.app.viewmodel.DashboardChartData
 import com.neurogarden.app.viewmodel.RealtimeUiState
+import com.neurogarden.app.viewmodel.SupportMessage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -63,6 +67,7 @@ fun MainDashboardScreen(
     todayRiskEvents: List<RiskEventEntity>,
     recentRiskEvents: List<RiskEventEntity>,
     todaySummary: DailyMonitoringSummary,
+    todayChartData: DashboardChartData,
     sevenDaySummaries: List<DailyMonitoringSummary>,
     careMode: CareMode,
     careModePolicy: CareModePolicy,
@@ -76,6 +81,7 @@ fun MainDashboardScreen(
     onContinueMock: () -> Unit,
     onFeedback: (String) -> Unit,
     onBeginSupportConversation: () -> Unit,
+    onSendSupportReply: (String) -> Unit,
     onEventFeedback: (Long, String) -> Unit,
     observeRiskEventById: (Long) -> Flow<RiskEventEntity?>,
     onClearHabitMemory: () -> Unit,
@@ -94,7 +100,7 @@ fun MainDashboardScreen(
     val alertEvent = latestEvent?.takeIf {
         it.id != dismissedAlertEventId &&
             selectedEventId == null &&
-            it.riskScore >= 0.60f &&
+            DiscomfortBoundaryCalculator.shouldShowPopup(it.riskScore, careMode, todaySummary.dataQualityLevel) &&
             it.riskLevel != "stable"
     }
 
@@ -133,6 +139,7 @@ fun MainDashboardScreen(
                     MainTab.TODAY -> TodayMonitorScreen(
                         realtime = realtime,
                         summary = todaySummary,
+                        chartData = todayChartData,
                         careMode = careMode,
                         events = todayRiskEvents,
                         onOpenEvent = { selectedEventId = it.id },
@@ -187,10 +194,9 @@ fun MainDashboardScreen(
                 selectedEventId = event.id
                 tab = MainTab.TODAY
             },
-            onBeginSupportConversation = {
-                dismissedAlertEventId = event.id
-                onBeginSupportConversation()
-            },
+            supportMessages = realtime.supportMessages,
+            onBeginSupportConversation = onBeginSupportConversation,
+            onSendSupportReply = onSendSupportReply,
             onSafe = {
                 dismissedAlertEventId = event.id
                 onFeedback("我现在安全")
@@ -207,12 +213,16 @@ fun MainDashboardScreen(
 private fun GentleRiskAlertDialog(
     event: RiskEventEntity,
     careMode: CareMode,
+    supportMessages: List<SupportMessage>,
     onDismiss: () -> Unit,
     onOpenEvent: () -> Unit,
     onBeginSupportConversation: () -> Unit,
+    onSendSupportReply: (String) -> Unit,
     onSafe: () -> Unit,
     onNeedCompanion: () -> Unit
 ) {
+    var chatOpen by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("检测到状态波动") },
@@ -221,18 +231,48 @@ private fun GentleRiskAlertDialog(
                 Text("我注意到你的节奏和日常相比有些不一样。你不用解释原因，我们可以先轻轻确认一下。")
                 Text("当前：${event.riskLevel.toRiskLabel(careMode)} / 评分 ${"%.2f".format(event.riskScore)}")
                 Text(event.reasonList().take(2).joinToString("；"))
+                if (chatOpen) {
+                    supportMessages.forEach { message ->
+                        Text(if (message.fromUser) "你：${message.text}" else "NeuroGarden：${message.text}")
+                    }
+                    TextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        label = { Text("可以只说一个词，也可以跳过") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        onClick = {
+                            val message = draft.trim()
+                            if (message.isNotEmpty()) {
+                                onSendSupportReply(message)
+                                draft = ""
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("发送")
+                    }
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = onBeginSupportConversation) {
-                Text("和我聊聊")
+            TextButton(
+                onClick = {
+                    if (!chatOpen) {
+                        chatOpen = true
+                        onBeginSupportConversation()
+                    }
+                }
+            ) {
+                Text(if (chatOpen) "弹窗陪伴中" else "和我聊聊")
             }
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = onSafe) { Text("我还好") }
                 TextButton(onClick = onNeedCompanion) { Text("想有人陪") }
-                TextButton(onClick = onOpenEvent) { Text("查看") }
+                TextButton(onClick = onOpenEvent) { Text("详情") }
             }
         }
     )
@@ -242,6 +282,7 @@ private fun GentleRiskAlertDialog(
 private fun TodayMonitorScreen(
     realtime: RealtimeUiState,
     summary: DailyMonitoringSummary,
+    chartData: DashboardChartData,
     careMode: CareMode,
     events: List<RiskEventEntity>,
     onOpenEvent: (RiskEventEntity) -> Unit,
@@ -259,14 +300,18 @@ private fun TodayMonitorScreen(
         Text("当前模式：${careMode.toModeLabel()}", style = MaterialTheme.typography.titleMedium)
         DailySummaryCard(summary)
         WeatherContextCard(realtime.weather.displayText())
+        EmotionalStateCard(realtime)
         ScoreCard(
             title = "当前状态评分",
             score = "%.2f".format(latestScore),
             level = events.firstOrNull()?.riskLevel?.toRiskLabel(careMode) ?: realtime.personalizedRisk.riskLevel.displayName
         )
-        ChartCard("今日状态评分曲线", events.toScorePoints(latestScore))
-        ChartCard("心率曲线", listOf(72f, 84f, 96f, realtime.packet.heartRate.toFloat()), maxValue = 130f)
-        ChartCard("呼吸频率曲线", listOf(12f, 15f, 18f, realtime.packet.breathRate.toFloat()), maxValue = 32f)
+        ChartCard("今日状态评分曲线", chartData.riskScores.ifEmpty { events.toScorePoints(latestScore) })
+        ChartCard("心率曲线", chartData.heartRates.ifEmpty { listOf(realtime.packet.heartRate.toFloat()) }, maxValue = 130f)
+        ChartCard("呼吸频率曲线", chartData.breathRates.ifEmpty { listOf(realtime.packet.breathRate.toFloat()) }, maxValue = 32f)
+        ChartCard("输入速度曲线", chartData.typingSpeeds.ifEmpty { listOf(typingFor(realtime)) }, maxValue = 180f)
+        ChartCard("删除频率曲线", chartData.deleteRates.ifEmpty { listOf(deleteFor(realtime)) }, maxValue = 0.40f)
+        ChartCard("停顿时长曲线", chartData.pauseDurations.ifEmpty { listOf(pauseFor(realtime)) }, maxValue = 8f)
         MetricGrid(realtime)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -319,6 +364,24 @@ private fun MetricGrid(realtime: RealtimeUiState) {
             Text("删除频率：模拟 ${"%.2f".format(deleteFor(realtime))}")
             Text("停顿时长：模拟 ${"%.1f".format(pauseFor(realtime))} 秒")
             Text("个人基线：${realtime.habitLearningStatus}")
+        }
+    }
+}
+
+@Composable
+private fun EmotionalStateCard(realtime: RealtimeUiState) {
+    val emotion = realtime.emotionalState
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("当前识别的情绪状态", style = MaterialTheme.typography.titleMedium)
+            Text("${emotion.primaryState} / 置信度 ${"%.0f".format(emotion.confidence * 100)}%")
+            Text(emotion.explanation)
+            emotion.interferenceReason?.let { Text(it) }
+            Text(
+                "紧张 ${emotion.arousalScore.toPercentText()} · 压力 ${emotion.stressScore.toPercentText()} · " +
+                    "疲惫 ${emotion.fatigueScore.toPercentText()} · 陪伴需求 ${emotion.lonelinessScore.toPercentText()}"
+            )
+            Text("情绪不是简单好坏二分；这里展示的是多维状态估计，不是医学诊断。")
         }
     }
 }
@@ -378,7 +441,10 @@ private fun EventDetailScreen(
                 Text("天气：${event.weather} / 时间段：${event.timeSegment}")
             }
         }
-        GuardianFeedbackButtons(onFeedback)
+        GuardianFeedbackButtons(
+            currentFeedback = event.guardianFeedback,
+            onFeedback = onFeedback
+        )
         feedbackTuningMessage?.let { message ->
             Card(Modifier.fillMaxWidth()) {
                 Text(message, modifier = Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
@@ -391,15 +457,24 @@ private fun EventDetailScreen(
 }
 
 @Composable
-private fun GuardianFeedbackButtons(onFeedback: (String) -> Unit) {
+private fun GuardianFeedbackButtons(
+    currentFeedback: String? = null,
+    onFeedback: (String) -> Unit
+) {
     val actions = listOf("确认异常", "标记误报", "已联系本人", "继续观察", "提高该类提醒优先级", "降低该类提醒优先级")
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("反馈", style = MaterialTheme.typography.titleMedium)
+            Text("当前反馈：${currentFeedback ?: "暂无，请选择一个反馈"}")
             actions.forEach { action ->
-                OutlinedButton(onClick = { onFeedback(action) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(action)
-                }
+                FilterChip(
+                    selected = currentFeedback == action,
+                    onClick = { onFeedback(action) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = {
+                        Text(if (currentFeedback == action) "$action（已选择）" else action)
+                    }
+                )
             }
         }
     }
@@ -466,6 +541,7 @@ private fun GuardianDashboardScreen(
     ) {
         Text("守护", style = MaterialTheme.typography.headlineMedium)
         Text(careMode.guardianModeDescription(), style = MaterialTheme.typography.bodyMedium)
+        DiscomfortBoundaryCard(careMode)
         if (careMode == CareMode.SPECIAL_CARE) {
             Card(Modifier.fillMaxWidth()) {
                 Text("特殊关怀模式会采用更敏感的状态偏离提醒，但仍只处理结构化统计特征，且不提供医疗诊断。", modifier = Modifier.padding(14.dp))
@@ -508,7 +584,25 @@ private fun GuardianDashboardScreen(
                 Text("自我监测模式默认隐藏监护人提醒，只展示个人趋势和温和提醒。", modifier = Modifier.padding(14.dp))
             }
         } else {
-            GuardianFeedbackButtons(onFeedback)
+            GuardianFeedbackButtons(
+                currentFeedback = latestEvent?.guardianFeedback,
+                onFeedback = onFeedback
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiscomfortBoundaryCard(careMode: CareMode) {
+    val boundary = DiscomfortBoundaryCalculator.boundaryFor(careMode)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("难受边界判定", style = MaterialTheme.typography.titleMedium)
+            Text("观察阈值：${boundary.observeThreshold.toPercentText()} / 弹窗阈值：${boundary.popupThreshold.toPercentText()}")
+            Text("守护确认阈值：${if (boundary.guardianThreshold >= 1f) "关闭" else boundary.guardianThreshold.toPercentText()}")
+            Text("每日上限：${boundary.dailyLimit} 次 / 冷却：${boundary.cooldownMinutes} 分钟")
+            Text(boundary.explanation)
+            Text("最终判断会融合本地结构化算法、MiniMax 模型输出、数据可信度和运动干扰。")
         }
     }
 }
@@ -720,6 +814,9 @@ private fun String.toSegmentLabel(): String = when (this) {
 
 private fun Float.signedPercent(): String =
     "${if (this >= 0f) "+" else ""}${"%.0f".format(this)}%"
+
+private fun Float.toPercentText(): String =
+    "${"%.0f".format((this * 100f).coerceIn(0f, 100f))}%"
 
 private fun heartRateSource(state: RealtimeUiState): String =
     if (state.bodyState.contains("Wear OS") || state.bodyState.contains("实时采集")) "Real" else "Mock"

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.neurogarden.app.agent.AgentSignalRequest
+import com.neurogarden.app.agent.AgentSignalResponse
 import com.neurogarden.app.agent.GuardianAgentApi
 import com.neurogarden.app.agent.SupportConversationMessageDto
 import com.neurogarden.app.agent.SupportConversationRequest
@@ -86,6 +87,15 @@ data class SupportMessage(
     val text: String
 )
 
+data class DashboardChartData(
+    val riskScores: List<Float> = emptyList(),
+    val heartRates: List<Float> = emptyList(),
+    val breathRates: List<Float> = emptyList(),
+    val typingSpeeds: List<Float> = emptyList(),
+    val deleteRates: List<Float> = emptyList(),
+    val pauseDurations: List<Float> = emptyList()
+)
+
 class MainViewModel(
     private val habitRepository: HabitRepository,
     private val riskEventRepository: RiskEventRepository,
@@ -129,6 +139,24 @@ class MainViewModel(
         SharingStarted.WhileSubscribed(5_000),
         emptyDailySummary()
     )
+    val todayChartData: StateFlow<DashboardChartData> = combine(
+        todayRiskEvents,
+        recentHabitSamples,
+        recentSensorRecords
+    ) { events, samples, sensors ->
+        val todayStart = System.currentTimeMillis().startOfDay()
+        val todaySamples = samples.filter { it.timestamp >= todayStart }.sortedBy { it.timestamp }
+        val todaySensors = sensors.filter { it.timestamp >= todayStart }.sortedBy { it.timestamp }
+        val todayEvents = events.sortedBy { it.startTime }
+        DashboardChartData(
+            riskScores = (todayEvents.map { it.riskScore } + todaySensors.map { it.stressScore }).takeLast(12),
+            heartRates = todaySensors.map { it.heartRate.toFloat() }.ifEmpty { todaySamples.map { it.heartRate.toFloat() } }.filter { it > 0f }.takeLast(12),
+            breathRates = todaySensors.map { it.breathRate.toFloat() }.ifEmpty { todaySamples.map { it.breathRate.toFloat() } }.filter { it > 0f }.takeLast(12),
+            typingSpeeds = todaySamples.map { it.typingSpeed }.filter { it > 0f }.takeLast(12),
+            deleteRates = todaySamples.map { it.deleteRate }.filter { it > 0f }.takeLast(12),
+            pauseDurations = todaySamples.map { it.pauseDuration }.filter { it > 0f }.takeLast(12)
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardChartData())
     val sevenDaySummaries: StateFlow<List<DailyMonitoringSummary>> = combine(
         recentRiskEvents,
         recentHabitSamples,
@@ -232,6 +260,7 @@ class MainViewModel(
                 ?: learnedThresholds
             val policy = careModePolicy.value
             val thresholds = baseThresholds.applyCareModePolicy(policy, now)
+            val weather = weatherRepository.current()
             habitRepository.saveBaseline(baseline)
             if (latestThresholds == null || baseThresholds == learnedThresholds) {
                 habitRepository.saveThresholdProfile(baseThresholds)
@@ -245,7 +274,9 @@ class MainViewModel(
                     latestRiskScore = result.stressScore,
                     latestRiskLevel = result.state.name.lowercase(),
                     userFeedback = sample.userFeedback,
-                    userEmotionLabel = _uiState.value.lastUserEmotionLabel
+                    userEmotionLabel = _uiState.value.lastUserEmotionLabel,
+                    weather = weather.eventLabel(),
+                    timeSegment = now.timeSegment()
                 )
             )
             val personalizedRisk = PersonalizedRiskCalculator.calculate(
@@ -264,8 +295,9 @@ class MainViewModel(
                 agentResponse = agentResponse,
                 weather = _uiState.value.weather.eventLabel()
             )
+            val localEmotion = EmotionalStateEstimator.estimate(sample, baseline, thresholds)
             val emotionalState = EmotionCalibrationEngine.calibrate(
-                estimate = EmotionalStateEstimator.estimate(sample, baseline, thresholds),
+                estimate = localEmotion.applyAgentEmotion(agentResponse),
                 recentFeedback = habitRepository.getRecentFeedbackRecords(12)
             )
             val trend = TrendAnalyzer.analyze(samples, now)
@@ -283,7 +315,7 @@ class MainViewModel(
                 emotionalState = emotionalState,
                 trend = trend,
                 feedbackSummaryText = feedbackSummary.toDisplayText(),
-                weather = weatherRepository.current()
+                weather = weather
             )
         }
     }
@@ -751,6 +783,20 @@ class MainViewModel(
         events.firstOrNull { it.weather.isNotBlank() && it.weather != "unknown" }?.weather
             ?: _uiState.value.weather.displayText()
 
+    private fun EmotionalStateEstimate.applyAgentEmotion(agent: AgentSignalResponse?): EmotionalStateEstimate {
+        if (agent == null || agent.confidence < 0.55f || agent.emotionalState.isNullOrBlank()) return this
+        return copy(
+            primaryState = agent.emotionalState,
+            confidence = ((confidence * 0.45f) + (agent.confidence * 0.55f)).coerceIn(0.25f, 0.92f),
+            arousalScore = agent.arousalScore?.coerceIn(0f, 1f) ?: arousalScore,
+            valenceScore = agent.valenceScore?.coerceIn(-1f, 1f) ?: valenceScore,
+            fatigueScore = agent.fatigueScore?.coerceIn(0f, 1f) ?: fatigueScore,
+            lonelinessScore = agent.lonelinessScore?.coerceIn(0f, 1f) ?: lonelinessScore,
+            stressScore = agent.stressScore?.coerceIn(0f, 1f) ?: stressScore,
+            explanation = "模型综合结构化数据判断为“${agent.emotionalState}”。${agent.reason}"
+        )
+    }
+
     private fun topContributingMetrics(events: List<RiskEventEntity>): List<String> {
         if (events.isEmpty()) return emptyList()
         val totals = mapOf(
@@ -980,6 +1026,17 @@ class MainViewModel(
         set(Calendar.SECOND, 0)
         set(Calendar.MILLISECOND, 0)
     }.timeInMillis
+
+    private fun Long.timeSegment(): String {
+        val hour = Calendar.getInstance().apply { timeInMillis = this@timeSegment }
+            .get(Calendar.HOUR_OF_DAY)
+        return when (hour) {
+            in 0..5 -> "late_night"
+            in 6..11 -> "morning"
+            in 12..17 -> "afternoon"
+            else -> "night"
+        }
+    }
 
     private fun emptyDailySummary(): DailyMonitoringSummary =
         DailyMonitoringSummary(

@@ -85,7 +85,13 @@ object PersonalizedRiskCalculator {
                 feedbackAdjustment +
                 agentAdjustment
             ).clamp()
-        val score = SignalQualityEvaluator.qualityCap(quality, rawScore)
+        val modelScore = agentResponse?.riskScore?.coerceIn(0f, 1f)
+        val blendedScore = if (modelScore != null && agentResponse.confidence >= 0.55f) {
+            rawScore * 0.58f + modelScore * 0.42f
+        } else {
+            rawScore
+        }
+        val score = SignalQualityEvaluator.qualityCap(quality, blendedScore)
         val sustained = hasSustainedDeviation(recentSamples, baseline, thresholds)
         val localRiskLevel = localLevelFor(score, thresholds.guardianNotifyThreshold, quality, sustained)
         val riskLevel = chooseRiskLevel(

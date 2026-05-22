@@ -31,7 +31,7 @@ android {
         versionName = "1.0"
         buildConfigField("String", "GUARDIAN_API_URL", buildConfigString(readSecretValue("URL")))
         buildConfigField("String", "GUARDIAN_API_KEY", buildConfigString(readSecretValue("APIkey")))
-        buildConfigField("String", "GUARDIAN_MODEL", buildConfigString(readSecretValue("MODEL").ifBlank { "gpt-4o-mini" }))
+        buildConfigField("String", "GUARDIAN_MODEL", buildConfigString(readSecretValue("MODEL").ifBlank { "MiniMax-M2.7" }))
     }
 
     buildFeatures {

@@ -103,6 +103,7 @@ private fun NeuroGardenRoot(
     val todayRiskEvents by mainViewModel.todayRiskEvents.collectAsState(initial = emptyList())
     val recentRiskEvents by mainViewModel.recentRiskEvents.collectAsState(initial = emptyList())
     val todaySummary by mainViewModel.todaySummary.collectAsState()
+    val todayChartData by mainViewModel.todayChartData.collectAsState()
     val sevenDaySummaries by mainViewModel.sevenDaySummaries.collectAsState()
     val careMode by mainViewModel.careMode.collectAsState()
     val careModePolicy by mainViewModel.careModePolicy.collectAsState()
@@ -141,6 +142,7 @@ private fun NeuroGardenRoot(
                 todayRiskEvents = todayRiskEvents,
                 recentRiskEvents = recentRiskEvents,
                 todaySummary = todaySummary,
+                todayChartData = todayChartData,
                 sevenDaySummaries = sevenDaySummaries,
                 careMode = careMode,
                 careModePolicy = careModePolicy,
@@ -190,6 +192,7 @@ private fun NeuroGardenRoot(
                 onContinueMock = mainViewModel::nextScenario,
                 onFeedback = mainViewModel::submitFeedback,
                 onBeginSupportConversation = mainViewModel::beginSupportConversation,
+                onSendSupportReply = mainViewModel::sendSupportReply,
                 onEventFeedback = mainViewModel::submitGuardianFeedback,
                 observeRiskEventById = mainViewModel::observeRiskEvent,
                 onClearHabitMemory = mainViewModel::clearHabitMemory,
