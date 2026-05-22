@@ -22,6 +22,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,12 +33,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
 import com.neurogarden.app.viewmodel.RealtimeUiState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
+import kotlinx.coroutines.flow.Flow
 
 enum class MainTab(val title: String) {
     TODAY("今日"),
@@ -46,21 +49,12 @@ enum class MainTab(val title: String) {
     SETTINGS("设置")
 }
 
-data class RiskEventUi(
-    val timeRange: String,
-    val riskLevel: String,
-    val riskScore: Float,
-    val confidence: Float,
-    val reasons: List<String>,
-    val deviations: Map<String, Float>,
-    val notifiedGuardian: Boolean,
-    val guardianFeedback: String
-)
-
 @Composable
 fun MainDashboardScreen(
     realtime: RealtimeUiState,
     sessions: List<TherapySessionEntity>,
+    todayRiskEvents: List<RiskEventEntity>,
+    recentRiskEvents: List<RiskEventEntity>,
     guardianSettings: GuardianSettings,
     onGuardianSettingsChange: (GuardianSettings) -> Unit,
     onStartPassiveGuardian: () -> Unit,
@@ -70,21 +64,27 @@ fun MainDashboardScreen(
     onConnectWear: () -> Unit,
     onContinueMock: () -> Unit,
     onFeedback: (String) -> Unit,
+    onEventFeedback: (Long, String) -> Unit,
+    observeRiskEventById: (Long) -> Flow<RiskEventEntity?>,
     onClearHabitMemory: () -> Unit,
     onDebugLog: () -> Unit
 ) {
     var tab by remember { mutableStateOf(MainTab.TODAY) }
-    var selectedEvent by remember(realtime) { mutableStateOf<RiskEventUi?>(null) }
-    val event = remember(realtime, guardianSettings) { realtime.toRiskEvent(guardianSettings.enabled) }
+    var selectedEventId by remember { mutableStateOf<Long?>(null) }
+    val selectedEventState = selectedEventId?.let { id ->
+        observeRiskEventById(id).collectAsState(initial = null)
+    }
+    val selectedEvent = selectedEventState?.value
+    val latestEvent = todayRiskEvents.firstOrNull() ?: recentRiskEvents.firstOrNull()
 
     Scaffold(
         bottomBar = {
             NavigationBar {
-                MainTab.values().forEach { item ->
+                MainTab.entries.forEach { item ->
                     NavigationBarItem(
                         selected = tab == item,
                         onClick = {
-                            selectedEvent = null
+                            selectedEventId = null
                             tab = item
                         },
                         label = { Text(item.title) },
@@ -102,26 +102,36 @@ fun MainDashboardScreen(
         ) {
             if (selectedEvent != null) {
                 EventDetailScreen(
-                    event = selectedEvent!!,
-                    onBack = { selectedEvent = null },
-                    onFeedback = onFeedback
+                    event = selectedEvent,
+                    onBack = { selectedEventId = null },
+                    onFeedback = { feedback -> onEventFeedback(selectedEvent.id, feedback) }
                 )
             } else {
                 when (tab) {
                     MainTab.TODAY -> TodayMonitorScreen(
                         realtime = realtime,
-                        event = event,
-                        onOpenEvent = { selectedEvent = event },
+                        events = todayRiskEvents,
+                        onOpenEvent = { selectedEventId = it.id },
                         onNextScenario = onContinueMock
                     )
-                    MainTab.HISTORY -> HistoryDashboardScreen(realtime, sessions)
+
+                    MainTab.HISTORY -> HistoryDashboardScreen(
+                        realtime = realtime,
+                        sessions = sessions,
+                        riskEvents = recentRiskEvents
+                    )
+
                     MainTab.GUARDIAN -> GuardianDashboardScreen(
                         settings = guardianSettings,
+                        latestEvent = latestEvent,
                         onSettingsChange = onGuardianSettingsChange,
                         onStartPassiveGuardian = onStartPassiveGuardian,
                         onStopPassiveGuardian = onStopPassiveGuardian,
-                        onFeedback = onFeedback
+                        onFeedback = { feedback ->
+                            latestEvent?.let { onEventFeedback(it.id, feedback) } ?: onFeedback(feedback)
+                        }
                     )
+
                     MainTab.SETTINGS -> SettingsDashboardScreen(
                         settings = guardianSettings,
                         onSettingsChange = onGuardianSettingsChange,
@@ -140,10 +150,11 @@ fun MainDashboardScreen(
 @Composable
 private fun TodayMonitorScreen(
     realtime: RealtimeUiState,
-    event: RiskEventUi,
-    onOpenEvent: () -> Unit,
+    events: List<RiskEventEntity>,
+    onOpenEvent: (RiskEventEntity) -> Unit,
     onNextScenario: () -> Unit
 ) {
+    val latestScore = events.firstOrNull()?.riskScore ?: realtime.personalizedRisk.riskScore
     Column(
         Modifier
             .fillMaxSize()
@@ -152,24 +163,36 @@ private fun TodayMonitorScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("今日监测", style = MaterialTheme.typography.headlineMedium)
-        ScoreCard("当前风险评分", "%.2f".format(event.riskScore), event.riskLevel)
-        ChartCard("今日风险评分曲线", listOf(0.18f, 0.22f, 0.31f, event.riskScore))
+        ScoreCard(
+            title = "当前风险评分",
+            score = "%.2f".format(latestScore),
+            level = events.firstOrNull()?.riskLevel?.toRiskLabel() ?: realtime.personalizedRisk.riskLevel.displayName
+        )
+        ChartCard("今日风险评分曲线", events.toScorePoints(latestScore))
         ChartCard("心率曲线", listOf(72f, 84f, 96f, realtime.packet.heartRate.toFloat()), maxValue = 130f)
         ChartCard("呼吸频率曲线", listOf(12f, 15f, 18f, realtime.packet.breathRate.toFloat()), maxValue = 32f)
         MetricGrid(realtime)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("天气因素", style = MaterialTheme.typography.titleMedium)
-                Text("当前版本预留天气接口：暂按普通天气处理。后续 Agent 将接收天气、温度、气压、降雨等结构化字段。")
+                Text(events.firstOrNull()?.weather?.takeIf { it != "unknown" } ?: "当前版本预留天气接口，默认按普通天气处理。")
             }
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("异常事件列表", style = MaterialTheme.typography.titleMedium)
-                Text("${event.timeRange} · ${event.riskLevel} · 评分 ${"%.2f".format(event.riskScore)}")
-                Text(event.reasons.joinToString("；"))
-                Button(onClick = onOpenEvent, modifier = Modifier.fillMaxWidth()) {
-                    Text("查看异常详情")
+                if (events.isEmpty()) {
+                    Text("今天还没有生成风险事件。系统会在风险评分达到观察阈值后记录事件。")
+                } else {
+                    events.forEach { event ->
+                        OutlinedButton(
+                            onClick = { onOpenEvent(event) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("${event.timeRangeText()} / ${event.riskLevel.toRiskLabel()} / ${"%.2f".format(event.riskScore)}")
+                        }
+                        Text(event.reasonList().joinToString("；"))
+                    }
                 }
             }
         }
@@ -195,7 +218,7 @@ private fun MetricGrid(realtime: RealtimeUiState) {
 
 @Composable
 private fun EventDetailScreen(
-    event: RiskEventUi,
+    event: RiskEventEntity,
     onBack: () -> Unit,
     onFeedback: (String) -> Unit
 ) {
@@ -209,26 +232,32 @@ private fun EventDetailScreen(
         Text("异常事件详情", style = MaterialTheme.typography.headlineMedium)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("异常时间段：${event.timeRange}")
-                Text("风险等级：${event.riskLevel}")
+                Text("异常时间段：${event.timeRangeText()}")
+                Text("风险等级：${event.riskLevel.toRiskLabel()}")
                 Text("风险评分：${"%.2f".format(event.riskScore)}")
                 Text("置信度：${"%.0f".format(event.confidence * 100)}%")
-                Text("是否通知监护人：${if (event.notifiedGuardian) "建议通知" else "暂不通知"}")
-                Text("监护人反馈结果：${event.guardianFeedback}")
+                Text("是否通知监护人：${if (event.guardianNotified) "建议通知" else "暂不通知"}")
+                Text("监护人反馈结果：${event.guardianFeedback ?: "暂无反馈"}")
             }
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Agent 分析原因", style = MaterialTheme.typography.titleMedium)
-                event.reasons.forEach { Text("· $it") }
+                event.reasonList().forEach { Text("· $it") }
+                Text("分析摘要：${event.agentAnalysis}")
+                Text("建议动作：${event.suggestedAction}")
             }
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("相对个人基线偏离", style = MaterialTheme.typography.titleMedium)
-                event.deviations.forEach { (name, value) ->
-                    Text("$name：${if (value >= 0f) "+" else ""}${"%.0f".format(value)}%")
-                }
+                Text("心率：${event.heartRateDeviationPercent.signedPercent()}")
+                Text("呼吸：${event.breathRateDeviationPercent.signedPercent()}")
+                Text("打字速度：${event.typingSpeedDeviationPercent.signedPercent()}")
+                Text("删除频率：${event.deleteRateDeviationPercent.signedPercent()}")
+                Text("停顿时长：${event.pauseDurationDeviationPercent.signedPercent()}")
+                Text("运动干扰：${"%.2f".format(event.motionLevel)}")
+                Text("天气：${event.weather} / 时间段：${event.timeSegment}")
             }
         }
         GuardianFeedbackButtons(onFeedback)
@@ -261,7 +290,12 @@ private fun GuardianFeedbackButtons(onFeedback: (String) -> Unit) {
 }
 
 @Composable
-private fun HistoryDashboardScreen(realtime: RealtimeUiState, sessions: List<TherapySessionEntity>) {
+private fun HistoryDashboardScreen(
+    realtime: RealtimeUiState,
+    sessions: List<TherapySessionEntity>,
+    riskEvents: List<RiskEventEntity>
+) {
+    val averageRisk = riskEvents.map { it.riskScore }.average().takeIf { !it.isNaN() }?.toFloat() ?: 0f
     Column(
         Modifier
             .fillMaxSize()
@@ -270,7 +304,16 @@ private fun HistoryDashboardScreen(realtime: RealtimeUiState, sessions: List<The
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("历史趋势", style = MaterialTheme.typography.headlineMedium)
-        ChartCard("近段风险趋势", listOf(0.22f, 0.28f, 0.35f, realtime.personalizedRisk.riskScore))
+        ChartCard("最近 7 天风险趋势", riskEvents.toScorePoints(realtime.personalizedRisk.riskScore))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("7 天事件统计", style = MaterialTheme.typography.titleMedium)
+                Text("风险事件：${riskEvents.size} 条")
+                Text("平均风险评分：${"%.2f".format(averageRisk)}")
+                Text("误报标记：${riskEvents.count { it.isFalseAlarm }} 条")
+                Text("监护人已反馈：${riskEvents.count { it.guardianFeedback != null }} 条")
+            }
+        }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("趋势摘要", style = MaterialTheme.typography.titleMedium)
@@ -279,14 +322,17 @@ private fun HistoryDashboardScreen(realtime: RealtimeUiState, sessions: List<The
                 Text(realtime.feedbackSummaryText)
             }
         }
-        sessions.take(8).forEach {
+        riskEvents.take(8).forEach {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp)) {
-                    Text(SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(it.startTime)))
-                    Text("评分：${"%.2f".format(it.beforeStressScore)} -> ${"%.2f".format(it.afterStressScore)}")
-                    Text("心率：${it.beforeHeartRate} -> ${it.afterHeartRate} BPM")
+                    Text(it.timeRangeText())
+                    Text("${it.riskLevel.toRiskLabel()} / 评分 ${"%.2f".format(it.riskScore)}")
+                    Text(it.reasonList().joinToString("；"))
                 }
             }
+        }
+        if (riskEvents.isEmpty() && sessions.isEmpty()) {
+            Text("还没有历史风险事件。")
         }
     }
 }
@@ -294,6 +340,7 @@ private fun HistoryDashboardScreen(realtime: RealtimeUiState, sessions: List<The
 @Composable
 private fun GuardianDashboardScreen(
     settings: GuardianSettings,
+    latestEvent: RiskEventEntity?,
     onSettingsChange: (GuardianSettings) -> Unit,
     onStartPassiveGuardian: () -> Unit,
     onStopPassiveGuardian: () -> Unit,
@@ -312,6 +359,7 @@ private fun GuardianDashboardScreen(
                 Text("监护人提醒", style = MaterialTheme.typography.titleMedium)
                 Text("当前联系人：${settings.name} / ${settings.relation}")
                 Text("提醒阈值：${"%.2f".format(settings.notifyThreshold)}")
+                Text("最近事件：${latestEvent?.let { "${it.riskLevel.toRiskLabel()} ${it.timeRangeText()}" } ?: "暂无"}")
                 Slider(
                     value = settings.notifyThreshold,
                     onValueChange = { onSettingsChange(settings.copy(notifyThreshold = it)) },
@@ -376,7 +424,7 @@ private fun SettingsDashboardScreen(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Agent API", style = MaterialTheme.typography.titleMedium)
-                Text("Agent 职责：分析结构化特征，输出风险评分、风险等级、置信度、主因和建议动作；不进行心理陪聊或医疗诊断。")
+                Text("Agent 分析结构化特征，输出风险评分、风险等级、置信度、主因和建议动作；不进行心理陪聊或医疗诊断。")
                 FilterChip(
                     selected = settings.agentCareEnabled,
                     onClick = { onSettingsChange(settings.copy(agentCareEnabled = !settings.agentCareEnabled)) },
@@ -385,7 +433,7 @@ private fun SettingsDashboardScreen(
             }
         }
         OutlinedButton(onClick = onDebugLog, modifier = Modifier.fillMaxWidth()) { Text("查看采集 Debug") }
-        OutlinedButton(onClick = onClearHabitMemory, modifier = Modifier.fillMaxWidth()) { Text("清除本地习惯记忆") }
+        OutlinedButton(onClick = onClearHabitMemory, modifier = Modifier.fillMaxWidth()) { Text("清除本地习惯记忆和风险事件") }
     }
 }
 
@@ -420,34 +468,34 @@ private fun ChartCard(title: String, points: List<Float>, maxValue: Float = 1f) 
     }
 }
 
-private fun RealtimeUiState.toRiskEvent(notifyEnabled: Boolean): RiskEventUi {
-    val heartDeviation = ((packet.heartRate - 72f) / 72f) * 100f
-    val breathDeviation = ((packet.breathRate - 12f) / 12f) * 100f
-    val typingDeviation = ((typingFor(this) - 100f) / 100f) * 100f
-    val reasons = buildList {
-        if (heartDeviation > 15f) add("心率高于个人基线")
-        if (breathDeviation > 25f) add("呼吸频率高于个人基线")
-        if (typingFor(this@toRiskEvent) < 80f) add("输入节奏低于平时水平")
-        if (deleteFor(this@toRiskEvent) > 0.12f) add("删除频率升高")
-        if (packet.motionLevel < 0.6f) add("运动干扰较低，生理信号可信度较高")
-    }.ifEmpty { listOf("当前未发现明显异常，仅保持观察") }
-    return RiskEventUi(
-        timeRange = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()),
-        riskLevel = personalizedRisk.riskLevel.displayName,
-        riskScore = personalizedRisk.riskScore,
-        confidence = personalizedRisk.confidence,
-        reasons = reasons,
-        deviations = mapOf(
-            "心率" to heartDeviation,
-            "呼吸" to breathDeviation,
-            "打字速度" to typingDeviation,
-            "删除频率" to (deleteFor(this) * 100f),
-            "停顿时长" to ((pauseFor(this) - 1.5f) / 1.5f * 100f)
-        ),
-        notifiedGuardian = notifyEnabled && personalizedRisk.guardianTriggerReason != null,
-        guardianFeedback = lastUserEmotionLabel ?: "暂无反馈"
-    )
+private fun List<RiskEventEntity>.toScorePoints(fallback: Float): List<Float> {
+    val points = takeLast(8).map { it.riskScore }
+    return points.ifEmpty { listOf(0.18f, 0.22f, 0.31f, fallback) }
 }
+
+private fun RiskEventEntity.reasonList(): List<String> =
+    mainReasons.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+
+private fun RiskEventEntity.timeRangeText(): String {
+    val format = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+    return if (startTime == endTime) {
+        format.format(Date(startTime))
+    } else {
+        "${format.format(Date(startTime))} - ${format.format(Date(endTime))}"
+    }
+}
+
+private fun String.toRiskLabel(): String = when (this) {
+    "urgent_support" -> "紧急支持"
+    "guardian_check" -> "监护确认"
+    "support" -> "需要支持"
+    "observe" -> "观察"
+    "stable" -> "稳定"
+    else -> this
+}
+
+private fun Float.signedPercent(): String =
+    "${if (this >= 0f) "+" else ""}${"%.0f".format(this)}%"
 
 private fun typingFor(state: RealtimeUiState): Float = when (state.scenario.name) {
     "CALM" -> 118f

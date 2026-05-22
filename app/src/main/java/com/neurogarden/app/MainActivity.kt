@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
     private val mainViewModel by viewModels<MainViewModel> {
         MainViewModel.Factory(
             (application as NeuroGardenApp).habitRepository,
+            (application as NeuroGardenApp).riskEventRepository,
             (application as NeuroGardenApp).guardianAgentApi
         )
     }
@@ -96,6 +97,8 @@ private fun NeuroGardenRoot(
     var showDebugLog by remember { mutableStateOf(false) }
     var wearConnectionStatus by remember { mutableStateOf("未连接") }
     val realtime by mainViewModel.uiState.collectAsStateWithLifecycle()
+    val todayRiskEvents by mainViewModel.todayRiskEvents.collectAsState(initial = emptyList())
+    val recentRiskEvents by mainViewModel.recentRiskEvents.collectAsState(initial = emptyList())
     val sessions by therapyViewModel.sessions.collectAsState(initial = emptyList())
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -128,6 +131,8 @@ private fun NeuroGardenRoot(
             MainDashboardScreen(
                 realtime = realtime,
                 sessions = sessions,
+                todayRiskEvents = todayRiskEvents,
+                recentRiskEvents = recentRiskEvents,
                 guardianSettings = guardianSettings,
                 onGuardianSettingsChange = { guardianSettings = it },
                 onStartPassiveGuardian = {
@@ -173,6 +178,8 @@ private fun NeuroGardenRoot(
                 },
                 onContinueMock = mainViewModel::nextScenario,
                 onFeedback = mainViewModel::submitFeedback,
+                onEventFeedback = mainViewModel::submitGuardianFeedback,
+                observeRiskEventById = mainViewModel::observeRiskEvent,
                 onClearHabitMemory = mainViewModel::clearHabitMemory,
                 onDebugLog = { showDebugLog = true }
             )

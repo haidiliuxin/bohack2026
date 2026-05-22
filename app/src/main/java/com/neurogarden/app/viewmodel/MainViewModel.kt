@@ -25,6 +25,7 @@ import com.neurogarden.app.data.local.ConversationSummaryEntity
 import com.neurogarden.app.data.local.HabitSampleEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.app.data.repository.HabitRepository
+import com.neurogarden.app.data.repository.RiskEventRepository
 import com.neurogarden.app.sensor.MockScenario
 import com.neurogarden.shared.model.SensorPacket
 import com.neurogarden.shared.model.StressResult
@@ -64,10 +65,15 @@ data class SupportMessage(
 
 class MainViewModel(
     private val habitRepository: HabitRepository,
+    private val riskEventRepository: RiskEventRepository,
     private val guardianAgentApi: GuardianAgentApi
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(RealtimeUiState())
     val uiState: StateFlow<RealtimeUiState> = _uiState.asStateFlow()
+    val todayRiskEvents = riskEventRepository.observeTodayEvents()
+    val recentRiskEvents = riskEventRepository.observeRecent7DayEvents()
+
+    fun observeRiskEvent(id: Long) = riskEventRepository.observeEventById(id)
 
     fun enterScenario(scenario: MockScenario = MockScenario.ANXIOUS) {
         updateScenario(scenario)
@@ -155,6 +161,12 @@ class MainViewModel(
                 thresholds = thresholds,
                 agentResponse = agentResponse,
                 recentSamples = samples
+            )
+            riskEventRepository.recordIfNeeded(
+                sample = sample,
+                baseline = baseline,
+                risk = personalizedRisk,
+                agentResponse = agentResponse
             )
             val emotionalState = EmotionCalibrationEngine.calibrate(
                 estimate = EmotionalStateEstimator.estimate(sample, baseline, thresholds),
@@ -265,6 +277,13 @@ class MainViewModel(
         }
     }
 
+    fun submitGuardianFeedback(eventId: Long, feedback: String) {
+        viewModelScope.launch {
+            riskEventRepository.updateGuardianFeedback(eventId, feedback)
+            submitFeedback(feedback)
+        }
+    }
+
     fun submitEmotionLabel(label: String) {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
@@ -348,6 +367,7 @@ class MainViewModel(
     fun clearHabitMemory() {
         viewModelScope.launch {
             habitRepository.clearHabitMemory()
+            riskEventRepository.clearAll()
             _uiState.value = RealtimeUiState(
                 supportMessages = listOf(
                     SupportMessage(
@@ -452,10 +472,11 @@ class MainViewModel(
 
     class Factory(
         private val habitRepository: HabitRepository,
+        private val riskEventRepository: RiskEventRepository,
         private val guardianAgentApi: GuardianAgentApi
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            MainViewModel(habitRepository, guardianAgentApi) as T
+            MainViewModel(habitRepository, riskEventRepository, guardianAgentApi) as T
     }
 }
