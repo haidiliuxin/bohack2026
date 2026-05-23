@@ -1,26 +1,25 @@
 package com.neurogarden.app.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val NeuroColors: ColorScheme = darkColorScheme(
-    primary = Color(0xFF6EE7D8),
-    secondary = Color(0xFFB9A7FF),
-    tertiary = Color(0xFFFFC48C),
-    background = Color(0xFF071316),
-    surface = Color(0xFF102023),
-    surfaceVariant = Color(0xFF1B3034),
-    onPrimary = Color(0xFF05201D),
-    onSecondary = Color(0xFF17102E),
-    onBackground = Color(0xFFE8F4F1),
-    onSurface = Color(0xFFE8F4F1)
+private val NeuroLightColors = lightColorScheme(
+    primary = Color(0xFF2F7CF6),
+    secondary = Color(0xFF23C9D4),
+    tertiary = Color(0xFFFFC45D),
+    background = Color(0xFFF7F9FC),
+    surface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFFF1F5FA),
+    onPrimary = Color(0xFFFFFFFF),
+    onSecondary = Color(0xFFFFFFFF),
+    onBackground = Color(0xFF111827),
+    onSurface = Color(0xFF111827),
+    outline = Color(0xFFE7ECF3)
 )
 
 @Composable
 fun NeuroGardenTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = NeuroColors, content = content)
+    MaterialTheme(colorScheme = NeuroLightColors, content = content)
 }

@@ -2,81 +2,123 @@ package com.neurogarden.app.ui.screen
 
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.neurogarden.app.algorithm.CareMode
 import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
 import com.neurogarden.app.algorithm.DiscomfortBoundaryCalculator
-import com.neurogarden.app.data.local.FeedbackRecordEntity
 import com.neurogarden.app.data.local.EmotionEvaluationRecordEntity
+import com.neurogarden.app.data.local.FeedbackRecordEntity
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
 import com.neurogarden.app.guardian.CareLoopRecord
-import com.neurogarden.app.guardian.CareLoopStatus
-import com.neurogarden.app.guardian.GuardianAuthorizationStatus
 import com.neurogarden.app.guardian.GuardianFeedbackAction
 import com.neurogarden.app.guardian.GuardianFeedbackRecord
-import com.neurogarden.app.guardian.GuardianNotificationChannel
 import com.neurogarden.app.guardian.GuardianNotificationRecord
 import com.neurogarden.app.guardian.GuardianSettingsSnapshot
-import com.neurogarden.app.guardian.SpecialCareDeviationResult
-import com.neurogarden.app.guardian.SpecialCareService
 import com.neurogarden.app.passive.AccessibilitySignalStore
-import com.neurogarden.app.passive.NotificationPolicyStore
+import com.neurogarden.app.ui.component.NeuroAlertDialog
+import com.neurogarden.app.ui.component.NeuroCard
+import com.neurogarden.app.ui.component.NeuroColors
+import com.neurogarden.app.ui.component.NeuroGradientCard
+import com.neurogarden.app.ui.component.NeuroListRow
+import com.neurogarden.app.ui.component.NeuroPrimaryButton
+import com.neurogarden.app.ui.component.NeuroSecondaryButton
 import com.neurogarden.app.viewmodel.DashboardChartData
 import com.neurogarden.app.viewmodel.RealtimeUiState
-import com.neurogarden.app.viewmodel.SupportMessage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.acos
+import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlinx.coroutines.flow.Flow
 
-enum class MainTab(val title: String) {
-    TODAY("今日"),
-    HISTORY("历史"),
-    GUARDIAN("守护"),
-    CHAT("聊天"),
-    SETTINGS("设置")
+enum class MainTab(
+    val title: String,
+    val icon: String
+) {
+    TODAY("今日", "✦"),
+    GUARDIAN("守护", "♡"),
+    CHAT("话聊助手", "◌"),
+    SETTINGS("设置", "●")
 }
+
+private data class MoodVisual(
+    val title: String,
+    val line: String,
+    val faceColor: Color,
+    val accentColor: Color,
+    val textColor: Color
+)
 
 @Composable
 fun MainDashboardScreen(
@@ -124,138 +166,147 @@ fun MainDashboardScreen(
 ) {
     var tab by remember { mutableStateOf(MainTab.TODAY) }
     var selectedEventId by remember { mutableStateOf<Long?>(null) }
+    var mindfulnessMode by remember { mutableStateOf(false) }
     var dismissedAlertEventId by remember { mutableStateOf<Long?>(null) }
     var dismissedAlertAt by remember { mutableStateOf(0L) }
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+
     LaunchedEffect(openChatRequest) {
         if (openChatRequest > 0) {
             selectedEventId = null
+            mindfulnessMode = false
             onBeginSupportConversation()
             tab = MainTab.CHAT
         }
     }
-    val selectedEventState = selectedEventId?.let { id ->
-        observeRiskEventById(id).collectAsState(initial = null)
-    }
-    val selectedEvent = selectedEventState?.value
+
+    val selectedEvent = selectedEventId
+        ?.let { observeRiskEventById(it).collectAsState(initial = null).value }
     val latestEvent = todayRiskEvents.firstOrNull() ?: recentRiskEvents.firstOrNull()
     val alertEvent = latestEvent?.takeIf {
         tab == MainTab.TODAY &&
             it.id != dismissedAlertEventId &&
             selectedEventId == null &&
             System.currentTimeMillis() - dismissedAlertAt >= 15L * 60L * 1000L &&
-            DiscomfortBoundaryCalculator.shouldShowPopup(it.riskScore, careMode, todaySummary.dataQualityLevel) &&
+            DiscomfortBoundaryCalculator.shouldShowPopup(
+                it.riskScore,
+                careMode,
+                todaySummary.dataQualityLevel
+            ) &&
             it.riskLevel != "stable"
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = NeuroColors.Background,
         bottomBar = {
-            NavigationBar {
-                MainTab.entries.forEach { item ->
-                    NavigationBarItem(
-                        selected = tab == item,
-                        onClick = {
-                            selectedEventId = null
-                            tab = item
-                        },
-                        label = { Text(item.title) },
-                        icon = { Text(item.title.take(1)) }
-                    )
-                }
+            if (!(tab == MainTab.CHAT && (mindfulnessMode || imeVisible))) {
+                FloatingTabBar(
+                    current = tab,
+                    onSelect = {
+                        selectedEventId = null
+                        mindfulnessMode = false
+                        tab = it
+                    }
+                )
             }
         }
     ) { padding ->
-        Column(
-            Modifier
+        Box(
+            modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .navigationBarsPadding()
+                .background(NeuroColors.Background)
+                .padding(if (mindfulnessMode || tab == MainTab.CHAT) PaddingValues(0.dp) else padding)
         ) {
-            if (selectedEvent != null) {
-                EventDetailScreen(
-                    event = selectedEvent,
-                    careMode = careMode,
-                    dataQualityLevel = todaySummary.dataQualityLevel,
-                    recentEvents = recentRiskEvents,
-                    guardianNotificationRecords = guardianNotificationRecords,
-                    guardianFeedbackRecords = guardianFeedbackRecords,
-                    careLoopRecords = careLoopRecords,
-                    feedbackTuningMessage = realtime.guardianFeedbackTuningMessage,
-                    onBack = { selectedEventId = null },
-                    onFeedback = { feedback -> onEventFeedback(selectedEvent.id, feedback) },
-                    onSimulateGuardianNotification = { onSimulateGuardianNotification(selectedEvent) },
-                    onRemoteGuardianFeedback = { action -> onRemoteGuardianFeedback(selectedEvent, action) }
+            when (tab) {
+                MainTab.TODAY -> TodayTab(
+                    realtime = realtime,
+                    summary = todaySummary,
+                    chartData = todayChartData,
+                    sevenDaySummaries = sevenDaySummaries,
+                    events = todayRiskEvents.ifEmpty { recentRiskEvents },
+                    wearConnectionStatus = wearConnectionStatus,
+                    onOpenEvent = { selectedEventId = it.id },
+                    onOpenBluetoothSettings = onOpenBluetoothSettings,
+                    onConnectWear = onConnectWear
                 )
-            } else {
-                when (tab) {
-                    MainTab.TODAY -> TodayMonitorScreen(
-                        realtime = realtime,
-                        summary = todaySummary,
-                        chartData = todayChartData,
-                        careMode = careMode,
-                        events = todayRiskEvents,
-                        onOpenEvent = { selectedEventId = it.id },
-                        onNextScenario = onContinueMock
-                    )
 
-                    MainTab.HISTORY -> HistoryDashboardScreen(
-                        realtime = realtime,
-                        sessions = sessions,
-                        riskEvents = recentRiskEvents,
-                        summaries = sevenDaySummaries
-                    )
+                MainTab.GUARDIAN -> GuardianTab(
+                    realtime = realtime,
+                    summary = todaySummary,
+                    settings = guardianSettings,
+                    profile = guardianProfile,
+                    notificationRecords = guardianNotificationRecords,
+                    feedbackRecords = guardianFeedbackRecords,
+                    careMode = careMode,
+                    policy = careModePolicy,
+                    latestEvent = latestEvent,
+                    onSettingsChange = onGuardianSettingsChange,
+                    onProfileChange = onGuardianProfileChange,
+                    onStartPassiveGuardian = onStartPassiveGuardian,
+                    onStopPassiveGuardian = onStopPassiveGuardian,
+                    onFeedback = { feedback ->
+                        latestEvent?.let { onEventFeedback(it.id, feedback) } ?: onFeedback(feedback)
+                    },
+                    onSimulateGuardianNotification = {
+                        latestEvent?.let(onSimulateGuardianNotification)
+                    },
+                    onRemoteGuardianFeedback = { action ->
+                        latestEvent?.let { onRemoteGuardianFeedback(it, action) }
+                    }
+                )
 
-                    MainTab.GUARDIAN -> GuardianDashboardScreen(
-                        realtime = realtime,
-                        todaySummary = todaySummary,
-                        settings = guardianSettings,
-                        guardianProfile = guardianProfile,
-                        notificationRecords = guardianNotificationRecords,
-                        guardianFeedbackRecords = guardianFeedbackRecords,
-                        careMode = careMode,
-                        policy = careModePolicy,
-                        latestEvent = latestEvent,
-                        onSettingsChange = onGuardianSettingsChange,
-                        onGuardianProfileChange = onGuardianProfileChange,
-                        onStartPassiveGuardian = onStartPassiveGuardian,
-                        onStopPassiveGuardian = onStopPassiveGuardian,
-                        onFeedback = { feedback ->
-                            latestEvent?.let { onEventFeedback(it.id, feedback) } ?: onFeedback(feedback)
-                        },
-                        onSimulateGuardianNotification = { latestEvent?.let(onSimulateGuardianNotification) },
-                        onRemoteGuardianFeedback = { action -> latestEvent?.let { onRemoteGuardianFeedback(it, action) } }
-                    )
+                MainTab.CHAT -> ChatTab(
+                    realtime = realtime,
+                    latestEvent = latestEvent,
+                    careMode = careMode,
+                    mindfulnessMode = mindfulnessMode,
+                    onMindfulnessChange = { mindfulnessMode = it },
+                    onBeginSupportConversation = onBeginSupportConversation,
+                    onSendSupportReply = onSendSupportReply
+                )
 
-                    MainTab.CHAT -> SupportChatScreen(
-                        realtime = realtime,
-                        latestEvent = latestEvent,
-                        careMode = careMode,
-                        onBeginSupportConversation = onBeginSupportConversation,
-                        onSendSupportReply = onSendSupportReply
-                    )
-
-                    MainTab.SETTINGS -> SettingsDashboardScreen(
-                        realtime = realtime,
-                        settings = guardianSettings,
-                        careMode = careMode,
-                        careModePolicy = careModePolicy,
-                        wearConnectionStatus = wearConnectionStatus,
-                        feedbackRecords = feedbackRecords,
-                        emotionEvaluations = emotionEvaluations,
-                        thresholdProfiles = thresholdProfiles,
-                        onCareModeChange = onCareModeChange,
-                        onSettingsChange = onGuardianSettingsChange,
-                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
-                        onOpenBluetoothSettings = onOpenBluetoothSettings,
-                        onOpenOverlaySettings = onOpenOverlaySettings,
-                        onConnectWear = onConnectWear,
-                        onSendWearBreathPattern = onSendWearBreathPattern,
-                        onClearHabitMemory = onClearHabitMemory,
-                        onSeedDemoMode = onSeedDemoMode,
-                        onDebugLog = onDebugLog
-                    )
-                }
+                MainTab.SETTINGS -> SettingsTab(
+                    realtime = realtime,
+                    settings = guardianSettings,
+                    careMode = careMode,
+                    policy = careModePolicy,
+                    wearConnectionStatus = wearConnectionStatus,
+                    feedbackRecords = feedbackRecords,
+                    emotionEvaluations = emotionEvaluations,
+                    thresholdProfiles = thresholdProfiles,
+                    sessions = sessions,
+                    careLoopRecords = careLoopRecords,
+                    onCareModeChange = onCareModeChange,
+                    onSettingsChange = onGuardianSettingsChange,
+                    onProfileChange = onGuardianProfileChange,
+                    profile = guardianProfile,
+                    onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+                    onOpenBluetoothSettings = onOpenBluetoothSettings,
+                    onOpenOverlaySettings = onOpenOverlaySettings,
+                    onConnectWear = onConnectWear,
+                    onSendWearBreathPattern = onSendWearBreathPattern,
+                    onContinueMock = onContinueMock,
+                    onClearHabitMemory = onClearHabitMemory,
+                    onSeedDemoMode = onSeedDemoMode,
+                    onDebugLog = onDebugLog
+                )
             }
         }
+    }
+
+    selectedEvent?.let { event ->
+        EventDetailDialog(
+            event = event,
+            careMode = careMode,
+            onDismiss = { selectedEventId = null },
+            onOpenChat = {
+                selectedEventId = null
+                onBeginSupportConversation()
+                tab = MainTab.CHAT
+            }
+        )
     }
 
     alertEvent?.let { event ->
@@ -270,7 +321,6 @@ fun MainDashboardScreen(
                 dismissedAlertEventId = event.id
                 dismissedAlertAt = System.currentTimeMillis()
                 selectedEventId = event.id
-                tab = MainTab.TODAY
             },
             onOpenChat = {
                 dismissedAlertEventId = event.id
@@ -292,17 +342,1137 @@ fun MainDashboardScreen(
             }
         )
     }
+
     realtime.integrationDemoAlert?.let { message ->
-        AlertDialog(
-            onDismissRequest = onDismissIntegrationDemoAlert,
-            title = { Text("联调演示提醒") },
-            text = { Text(message) },
-            confirmButton = {
-                Button(onClick = onDismissIntegrationDemoAlert) {
-                    Text("知道了")
+        NeuroAlertDialog(
+            title = "联调演示提醒",
+            confirmText = "知道了",
+            onConfirm = onDismissIntegrationDemoAlert,
+            onDismiss = onDismissIntegrationDemoAlert
+        ) {
+            Text(message, color = NeuroColors.TextSecondary)
+        }
+    }
+}
+
+@Composable
+private fun FloatingTabBar(
+    current: MainTab,
+    onSelect: (MainTab) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(start = 18.dp, end = 18.dp, bottom = 10.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .shadow(18.dp, RoundedCornerShape(30.dp), clip = false)
+                .clip(RoundedCornerShape(30.dp))
+                .background(Color.White.copy(alpha = 0.88f))
+                .border(1.dp, Color.White.copy(alpha = 0.95f), RoundedCornerShape(30.dp))
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            MainTab.entries.forEach { tab ->
+                val selected = current == tab
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(if (selected) NeuroColors.BlueSoft else Color.Transparent)
+                        .clickable { onSelect(tab) }
+                        .padding(top = 7.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        tab.icon,
+                        color = if (selected) NeuroColors.Blue else NeuroColors.TextMuted,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        tab.title,
+                        color = if (selected) NeuroColors.Blue else NeuroColors.TextMuted,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayTab(
+    realtime: RealtimeUiState,
+    summary: DailyMonitoringSummary,
+    chartData: DashboardChartData,
+    sevenDaySummaries: List<DailyMonitoringSummary>,
+    events: List<RiskEventEntity>,
+    wearConnectionStatus: String,
+    onOpenEvent: (RiskEventEntity) -> Unit,
+    onOpenBluetoothSettings: () -> Unit,
+    onConnectWear: () -> Unit
+) {
+    val risk = latestRiskScore(events, realtime)
+    val moodScore = riskToMoodScore(risk)
+    val updateText = relativeTime(realtime.packet.timestamp)
+    val temperature = estimatedTemperature(realtime, risk)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 22.dp, top = 38.dp, end = 22.dp, bottom = 106.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "你好，林林",
+                color = NeuroColors.TextPrimary,
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "关注身心节律，把握更好的你",
+                color = NeuroColors.TextSecondary,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            MetricTile(
+                title = "心率",
+                value = "${realtime.packet.heartRate} BPM",
+                subtitle = "$updateText · ${heartTrendLabel(realtime)}",
+                icon = "♡",
+                brush = Brush.linearGradient(listOf(Color(0xFFFF8A7A), Color(0xFFFF6F87))),
+                modifier = Modifier.weight(1f)
+            )
+            MetricTile(
+                title = "呼吸",
+                value = "${realtime.packet.breathRate} 次/分",
+                subtitle = "$updateText · ${breathStateLabel(realtime.packet.breathRate)}",
+                icon = "≋",
+                brush = Brush.linearGradient(listOf(Color(0xFF8EE8C7), Color(0xFF68CFAF))),
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            MetricTile(
+                title = "体温",
+                value = "%.1f°C".format(temperature),
+                subtitle = "$updateText · 实时皮温",
+                icon = "♨",
+                brush = Brush.linearGradient(listOf(Color(0xFFC5B6FF), Color(0xFFA391F3))),
+                modifier = Modifier.weight(1f)
+            )
+            MetricTile(
+                title = "设备",
+                value = deviceValue(wearConnectionStatus),
+                subtitle = deviceSubtitle(wearConnectionStatus),
+                icon = "▣",
+                brush = Brush.linearGradient(listOf(Color(0xFF91B4FF), Color(0xFF5E92F4))),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable {
+                        if (wearConnectionStatus.contains("未连接")) onConnectWear() else onOpenBluetoothSettings()
+                    }
+            )
+        }
+
+        MoodScoreCard(score = moodScore)
+        HistoryScoreCard(summaries = sevenDaySummaries, chartData = chartData)
+        WarningRecordsCard(events = events, onOpenEvent = onOpenEvent)
+        Text(
+            summary.summaryText.ifBlank { "今日守护正在运行，实时数据会持续刷新。" },
+            color = NeuroColors.TextSecondary,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun MetricTile(
+    title: String,
+    value: String,
+    subtitle: String,
+    icon: String,
+    brush: Brush,
+    modifier: Modifier = Modifier
+) {
+    NeuroGradientCard(
+        modifier = modifier.height(126.dp),
+        brush = brush
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Text(icon, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Text(
+                value,
+                color = Color.White,
+                fontSize = 20.sp,
+                lineHeight = 22.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            subtitle,
+            color = Color.White.copy(alpha = 0.82f),
+            style = MaterialTheme.typography.labelSmall,
+            lineHeight = 14.sp
+        )
+    }
+}
+
+@Composable
+private fun MoodScoreCard(score: Int) {
+    val mood = moodVisual(score)
+    NeuroCard(modifier = Modifier.fillMaxWidth()) {
+        Text("今日节律评分", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            MoodFace(score = score, modifier = Modifier.size(132.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    score.toString(),
+                    color = mood.textColor,
+                    style = MaterialTheme.typography.displayMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    mood.title,
+                    color = NeuroColors.TextPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    mood.line,
+                    color = NeuroColors.TextSecondary,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MoodFace(score: Int, modifier: Modifier = Modifier) {
+    val visual = moodVisual(score)
+    Canvas(modifier = modifier) {
+        val radius = size.minDimension * 0.31f
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val stroke = Stroke(width = 5f, cap = StrokeCap.Round)
+        if (score >= 85) {
+            repeat(14) { index ->
+                val angle = (2 * PI * index / 14).toFloat()
+                val start = Offset(
+                    center.x + cos(angle) * radius * 1.28f,
+                    center.y + sin(angle) * radius * 1.28f
+                )
+                val end = Offset(
+                    center.x + cos(angle) * radius * 1.63f,
+                    center.y + sin(angle) * radius * 1.63f
+                )
+                drawLine(visual.accentColor, start, end, strokeWidth = 7f, cap = StrokeCap.Round)
+            }
+        }
+        drawCircle(visual.faceColor, radius, center)
+        drawCircle(visual.accentColor.copy(alpha = 0.28f), radius * 0.19f, Offset(center.x - radius * 0.45f, center.y + radius * 0.10f))
+        drawCircle(visual.accentColor.copy(alpha = 0.28f), radius * 0.19f, Offset(center.x + radius * 0.45f, center.y + radius * 0.10f))
+        val ink = Color(0xFF26344D)
+        when {
+            score >= 70 -> {
+                drawArc(
+                    color = ink,
+                    startAngle = 190f,
+                    sweepAngle = 155f,
+                    useCenter = false,
+                    topLeft = Offset(center.x - radius * 0.55f, center.y - radius * 0.30f),
+                    size = Size(radius * 0.38f, radius * 0.30f),
+                    style = stroke
+                )
+                drawArc(
+                    color = ink,
+                    startAngle = 195f,
+                    sweepAngle = 150f,
+                    useCenter = false,
+                    topLeft = Offset(center.x + radius * 0.18f, center.y - radius * 0.30f),
+                    size = Size(radius * 0.38f, radius * 0.30f),
+                    style = stroke
+                )
+                drawArc(
+                    color = ink,
+                    startAngle = 25f,
+                    sweepAngle = 130f,
+                    useCenter = false,
+                    topLeft = Offset(center.x - radius * 0.36f, center.y + radius * 0.02f),
+                    size = Size(radius * 0.72f, radius * 0.50f),
+                    style = stroke
+                )
+            }
+            score >= 55 -> {
+                drawLine(ink, Offset(center.x - radius * 0.52f, center.y - radius * 0.18f), Offset(center.x - radius * 0.20f, center.y - radius * 0.13f), strokeWidth = 5f, cap = StrokeCap.Round)
+                drawLine(ink, Offset(center.x + radius * 0.20f, center.y - radius * 0.13f), Offset(center.x + radius * 0.52f, center.y - radius * 0.18f), strokeWidth = 5f, cap = StrokeCap.Round)
+                drawLine(ink, Offset(center.x - radius * 0.28f, center.y + radius * 0.36f), Offset(center.x + radius * 0.28f, center.y + radius * 0.34f), strokeWidth = 5f, cap = StrokeCap.Round)
+            }
+            score >= 40 -> {
+                drawArc(ink, 205f, 125f, false, Offset(center.x - radius * 0.55f, center.y - radius * 0.28f), Size(radius * 0.34f, radius * 0.22f), style = stroke)
+                drawArc(ink, 210f, 120f, false, Offset(center.x + radius * 0.20f, center.y - radius * 0.28f), Size(radius * 0.34f, radius * 0.22f), style = stroke)
+                drawArc(ink, 205f, 130f, false, Offset(center.x - radius * 0.32f, center.y + radius * 0.22f), Size(radius * 0.64f, radius * 0.42f), style = stroke)
+            }
+            else -> {
+                drawLine(ink, Offset(center.x - radius * 0.48f, center.y - radius * 0.22f), Offset(center.x - radius * 0.25f, center.y + radius * 0.02f), strokeWidth = 5f, cap = StrokeCap.Round)
+                drawLine(ink, Offset(center.x - radius * 0.25f, center.y - radius * 0.22f), Offset(center.x - radius * 0.48f, center.y + radius * 0.02f), strokeWidth = 5f, cap = StrokeCap.Round)
+                drawLine(ink, Offset(center.x + radius * 0.25f, center.y - radius * 0.22f), Offset(center.x + radius * 0.48f, center.y + radius * 0.02f), strokeWidth = 5f, cap = StrokeCap.Round)
+                drawLine(ink, Offset(center.x + radius * 0.48f, center.y - radius * 0.22f), Offset(center.x + radius * 0.25f, center.y + radius * 0.02f), strokeWidth = 5f, cap = StrokeCap.Round)
+                drawArc(ink, 205f, 130f, false, Offset(center.x - radius * 0.30f, center.y + radius * 0.20f), Size(radius * 0.60f, radius * 0.42f), style = stroke)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryScoreCard(
+    summaries: List<DailyMonitoringSummary>,
+    chartData: DashboardChartData
+) {
+    val points = historyMoodScores(summaries, chartData)
+    NeuroCard(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column {
+                Text("近 7 天节律趋势", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                Text("本周评分均匀分布展示", color = NeuroColors.TextMuted, style = MaterialTheme.typography.labelSmall)
+            }
+            Text("平均 ${points.average().roundToInt()}", color = NeuroColors.Blue, fontWeight = FontWeight.Bold)
+        }
+        ScoreLineChart(
+            points = points,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(148.dp)
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            listOf("一", "二", "三", "四", "五", "六", "日").forEach {
+                Text(it, color = NeuroColors.TextMuted, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScoreLineChart(
+    points: List<Int>,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val safePoints = points.ifEmpty { listOf(68, 72, 78, 84, 86, 81, 86) }
+        val left = 20f
+        val right = size.width - 20f
+        val top = 16f
+        val bottom = size.height - 28f
+        val path = Path()
+        safePoints.forEachIndexed { index, score ->
+            val x = left + (right - left) * index / max(1, safePoints.lastIndex)
+            val normalized = ((score - 20f) / 80f).coerceIn(0f, 1f)
+            val y = bottom - normalized * (bottom - top)
+            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            drawCircle(NeuroColors.Blue, 6f, Offset(x, y))
+            drawCircle(Color.White, 3f, Offset(x, y))
+        }
+        drawPath(path, NeuroColors.Blue, style = Stroke(width = 5f, cap = StrokeCap.Round))
+        drawLine(NeuroColors.Line, Offset(left, bottom), Offset(right, bottom), strokeWidth = 2f)
+    }
+}
+
+@Composable
+private fun WarningRecordsCard(
+    events: List<RiskEventEntity>,
+    onOpenEvent: (RiskEventEntity) -> Unit
+) {
+    NeuroCard(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("近期提醒记录", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Text("查看全部", color = NeuroColors.Blue, style = MaterialTheme.typography.labelMedium)
+        }
+        if (events.isEmpty()) {
+            DemoWarningRow("今天 08:32", "心率偏高提醒", "120 次/分")
+            DemoWarningRow("昨天 15:40", "久坐提醒", "已久坐 82 分钟")
+            DemoWarningRow("昨天 07:10", "睡眠不足提醒", "睡眠 5 小时 12 分")
+        } else {
+            events.take(4).forEach { event ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { onOpenEvent(event) }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SmallStatusDot(color = eventColor(event.riskScore))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(event.riskLevel.toRiskLabel(), color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                        Text(event.reasonList().take(1).joinToString().ifBlank { "状态出现短暂波动" }, color = NeuroColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(event.startTime.toReadableTime(), color = NeuroColors.TextMuted, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DemoWarningRow(time: String, title: String, detail: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        SmallStatusDot(NeuroColors.Blue)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Text(detail, color = NeuroColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(time, color = NeuroColors.TextMuted, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+private fun SmallStatusDot(color: Color) {
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .background(color.copy(alpha = 0.14f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(11.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+    }
+}
+
+@Composable
+private fun GuardianTab(
+    realtime: RealtimeUiState,
+    summary: DailyMonitoringSummary,
+    settings: GuardianSettings,
+    profile: GuardianSettingsSnapshot,
+    notificationRecords: List<GuardianNotificationRecord>,
+    feedbackRecords: List<GuardianFeedbackRecord>,
+    careMode: CareMode,
+    policy: CareModePolicy,
+    latestEvent: RiskEventEntity?,
+    onSettingsChange: (GuardianSettings) -> Unit,
+    onProfileChange: (GuardianSettingsSnapshot) -> Unit,
+    onStartPassiveGuardian: () -> Unit,
+    onStopPassiveGuardian: () -> Unit,
+    onFeedback: (String) -> Unit,
+    onSimulateGuardianNotification: () -> Unit,
+    onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit
+) {
+    var emotionSensitivity by remember { mutableFloatStateOf(0.60f) }
+    var bodySensitivity by remember { mutableFloatStateOf(0.50f) }
+    var typingSensitivity by remember { mutableFloatStateOf(0.70f) }
+    var showRecords by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = 106.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("守护", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+            Text("阈值灵敏度设置", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            ThresholdSlider("情绪波动", emotionSensitivity, NeuroColors.Lavender) { emotionSensitivity = it }
+            ThresholdSlider("身体信号", bodySensitivity, NeuroColors.Coral) { bodySensitivity = it }
+            ThresholdSlider("输入节奏", typingSensitivity, NeuroColors.Blue) { typingSensitivity = it }
+            ThresholdSlider("提醒频率", settings.notifyThreshold, NeuroColors.Amber) {
+                onSettingsChange(settings.copy(notifyThreshold = it.coerceIn(0.55f, 0.95f)))
+            }
+            Text(
+                "当前：适中，适合日常守护。敏感度越高，系统越早提示，但也可能增加打扰。",
+                color = NeuroColors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+            Text("运行状态", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .width(108.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(NeuroColors.BlueSoft)
+                        .clickable { showRecords = true }
+                        .padding(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text("今日提醒", color = NeuroColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                    Text(todayNotificationCount(notificationRecords).toString(), color = NeuroColors.Blue, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+                    Text("次", color = NeuroColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("AI 评估", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        guardianEvaluation(realtime, summary, latestEvent),
+                        color = NeuroColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = settings.passiveGuardianRunning,
+                    onClick = {
+                        if (settings.passiveGuardianRunning) onStopPassiveGuardian() else onStartPassiveGuardian()
+                    },
+                    label = { Text(if (settings.passiveGuardianRunning) "守护运行中" else "启动守护") }
+                )
+                FilterChip(
+                    selected = profile.notificationEnabled,
+                    onClick = { onProfileChange(profile.copy(notificationEnabled = !profile.notificationEnabled)) },
+                    label = { Text(if (profile.notificationEnabled) "通知已开" else "通知未开") }
+                )
+            }
+        }
+
+        NeuroListRow(
+            title = "紧急联系人",
+            subtitle = "${profile.guardianName.ifBlank { settings.name }} · ${profile.relationship.ifBlank { settings.relation }} · ${profile.authorizationStatus.displayName}",
+            leading = { SmallStatusDot(NeuroColors.Coral) }
+        )
+        NeuroListRow(
+            title = "个人简洁病例",
+            subtitle = if (profile.emergencyNote.isBlank()) "暂无补充说明，可在正式资料页完善" else profile.emergencyNote,
+            leading = { SmallStatusDot(NeuroColors.Blue) }
+        )
+
+        if (latestEvent != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                NeuroSecondaryButton(
+                    text = "模拟通知",
+                    onClick = onSimulateGuardianNotification,
+                    modifier = Modifier.weight(1f)
+                )
+                NeuroSecondaryButton(
+                    text = "我还好",
+                    onClick = { onFeedback("我还好") },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                NeuroSecondaryButton(
+                    text = "继续观察",
+                    onClick = { onRemoteGuardianFeedback(GuardianFeedbackAction.KEEP_WATCHING) },
+                    modifier = Modifier.weight(1f)
+                )
+                NeuroSecondaryButton(
+                    text = "标记误报",
+                    onClick = { onRemoteGuardianFeedback(GuardianFeedbackAction.FALSE_POSITIVE) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        Text(
+            "模式：${careMode.toModeLabel()} · 提醒阈值 ${"%.0f".format(policy.notificationThreshold * 100)}% · 反馈记录 ${feedbackRecords.size}",
+            color = NeuroColors.TextMuted,
+            style = MaterialTheme.typography.labelMedium
+        )
+    }
+
+    if (showRecords) {
+        NeuroAlertDialog(
+            title = "今日提醒记录",
+            confirmText = "知道了",
+            onConfirm = { showRecords = false },
+            onDismiss = { showRecords = false }
+        ) {
+            if (notificationRecords.isEmpty()) {
+                Text("今天还没有提醒记录。", color = NeuroColors.TextSecondary)
+            } else {
+                notificationRecords.take(6).forEach {
+                    Text("${it.sentAt.toReadableTime()} · ${it.status.displayName} · ${it.reason}", color = NeuroColors.TextSecondary)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThresholdSlider(
+    title: String,
+    value: Float,
+    color: Color,
+    onChange: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(title, color = NeuroColors.TextPrimary, style = MaterialTheme.typography.bodyMedium)
+            Text("${"%.0f".format(value * 100)}%", color = NeuroColors.TextSecondary, style = MaterialTheme.typography.bodyMedium)
+        }
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = 0f..1f,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun ChatTab(
+    realtime: RealtimeUiState,
+    latestEvent: RiskEventEntity?,
+    careMode: CareMode,
+    mindfulnessMode: Boolean,
+    onMindfulnessChange: (Boolean) -> Unit,
+    onBeginSupportConversation: () -> Unit,
+    onSendSupportReply: (String) -> Unit
+) {
+    val score = riskToMoodScore(latestRiskScore(listOfNotNull(latestEvent), realtime))
+    var draft by remember { mutableStateOf("") }
+    var showHistory by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
+    val inputBottomPadding = if (keyboardVisible) 8.dp else 106.dp
+
+    LaunchedEffect(Unit) {
+        onBeginSupportConversation()
+    }
+
+    if (mindfulnessMode) {
+        MindfulnessMode(score = score, onExit = { onMindfulnessChange(false) })
+        return
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = inputBottomPadding),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            CircleIconButton(text = "=", onClick = { showHistory = true })
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color.White)
+                    .padding(horizontal = 22.dp, vertical = 10.dp)
+            ) {
+                Text("话聊助手", color = NeuroColors.Blue, fontWeight = FontWeight.Bold)
+            }
+            MindfulnessIcon(onClick = { onMindfulnessChange(true) })
+        }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            ParticleSphere(score = score, size = 260.dp)
+            if (realtime.supportMessages.isNotEmpty()) {
+                Spacer(Modifier.height(20.dp))
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    realtime.supportMessages.takeLast(2).forEach { message ->
+                        ChatBubble(fromUser = message.fromUser, text = message.text)
+                    }
+                }
+            } else {
+                Text(
+                    "我在这里。你可以只说一句现在的感觉。",
+                    color = NeuroColors.TextMuted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Text(
+                "当前模式：${careMode.toModeLabel()}",
+                color = NeuroColors.TextMuted,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        ChatInputBar(
+            value = draft,
+            onValueChange = { draft = it },
+            onSend = {
+                val text = draft.trim()
+                if (text.isNotEmpty()) {
+                    onSendSupportReply(text)
+                    draft = ""
                 }
             }
         )
+        }
+
+        if (showHistory) {
+            ChatHistoryDrawer(
+                onDismiss = { showHistory = false },
+                onNewConversation = {
+                    draft = ""
+                    onBeginSupportConversation()
+                    showHistory = false
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChatHistoryDrawer(
+    onDismiss: () -> Unit,
+    onNewConversation: () -> Unit
+) {
+    Row(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .width(304.dp)
+                .fillMaxHeight()
+                .background(Color.White)
+                .padding(start = 26.dp, top = 58.dp, end = 24.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "历史记录",
+                    color = NeuroColors.TextPrimary,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = onDismiss) {
+                    Text("收起", color = NeuroColors.TextMuted)
+                }
+            }
+            NeuroPrimaryButton(
+                text = "新建对话",
+                onClick = onNewConversation,
+                modifier = Modifier.fillMaxWidth()
+            )
+            ChatHistoryGroup("今天", listOf("现在的感觉", "睡前放松一下"))
+            ChatHistoryGroup("本周", listOf("一次心率偏高后的对话", "复盘昨天的压力", "想做 1 分钟呼吸"))
+            ChatHistoryGroup("更早", listOf("家庭守护设置说明", "手表连接问题"))
+            Spacer(modifier = Modifier.weight(1f))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(NeuroColors.BlueSoft),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("林", color = NeuroColors.Blue, fontWeight = FontWeight.Bold)
+                }
+                Text("林林", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.weight(1f))
+                Text("···", color = NeuroColors.TextMuted, fontSize = 24.sp)
+            }
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .background(Color.Black.copy(alpha = 0.30f))
+                .clickable(onClick = onDismiss)
+        )
+    }
+}
+
+@Composable
+private fun ChatHistoryGroup(title: String, items: List<String>) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, color = NeuroColors.TextMuted, style = MaterialTheme.typography.titleSmall)
+        items.forEach { item ->
+            Text(
+                item,
+                color = NeuroColors.TextPrimary,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { }
+                    .padding(vertical = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MindfulnessMode(score: Int, onExit: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onExit
+            )
+            .padding(bottom = 60.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        ParticleSphere(score = score, size = 310.dp, mindfulness = true)
+        Text(
+            "吸气，跟着光慢慢变大\n呼气，慢慢放下\n轻触屏幕返回",
+            color = NeuroColors.TextSecondary,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+    }
+}
+
+@Composable
+private fun ParticleSphere(
+    score: Int,
+    size: Dp,
+    mindfulness: Boolean = false
+) {
+    val transition = rememberInfiniteTransition(label = "particle-sphere")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(if (mindfulness) 9800 else sphereSpeed(score)),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rotation"
+    )
+    val breath by transition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(if (mindfulness) 4300 else breathSpeed(score)),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breath"
+    )
+    val baseColor = sphereColor(score)
+    Canvas(modifier = Modifier.size(size)) {
+        val center = Offset(this.size.width / 2f, this.size.height / 2f)
+        val radius = this.size.minDimension * 0.36f * breath
+        val count = if (mindfulness) 380 else 300
+        val golden = PI * (3.0 - kotlin.math.sqrt(5.0))
+        repeat(count) { index ->
+            val k = index + 0.5
+            val phi = acos(1.0 - 2.0 * k / count)
+            val theta = golden * index + rotation * 2.0 * PI
+            val x3 = cos(theta) * sin(phi)
+            val y3 = sin(theta) * sin(phi)
+            val z3 = cos(phi)
+            val perspective = 0.72 + 0.28 * ((z3 + 1.0) / 2.0)
+            val x = center.x + (x3 * radius * perspective).toFloat()
+            val y = center.y + (y3 * radius * perspective).toFloat()
+            val alpha = (0.18 + 0.58 * ((z3 + 1.0) / 2.0)).toFloat()
+            drawCircle(
+                color = baseColor.copy(alpha = alpha),
+                radius = (1.35f + 1.4f * perspective.toFloat()) * if (mindfulness) 1.12f else 1f,
+                center = Offset(x, y)
+            )
+        }
+        drawCircle(baseColor.copy(alpha = 0.08f), radius * 1.08f, center)
+    }
+}
+
+@Composable
+private fun CircleIconButton(text: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .shadow(10.dp, CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(Color.White)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, color = Color.Black, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun MindfulnessIcon(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .shadow(10.dp, CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(Color.White)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(26.dp)) {
+            val c = Offset(size.width / 2f, size.height / 2f)
+            drawCircle(Color.Transparent, size.minDimension * 0.44f, c, style = Stroke(3.5f, cap = StrokeCap.Round))
+            drawCircle(Color.Black, size.minDimension * 0.11f, c, style = Stroke(3f, cap = StrokeCap.Round))
+            drawArc(Color.Black, 12f, 130f, false, Offset(2f, 2f), Size(size.width - 4f, size.height - 4f), style = Stroke(3.2f, cap = StrokeCap.Round))
+            drawArc(Color.Black, 198f, 128f, false, Offset(2f, 2f), Size(size.width - 4f, size.height - 4f), style = Stroke(3.2f, cap = StrokeCap.Round))
+        }
+    }
+}
+
+@Composable
+private fun ChatBubble(fromUser: Boolean, text: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (fromUser) Arrangement.End else Arrangement.Start
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(max = 286.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(if (fromUser) NeuroColors.Blue else Color.White)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text,
+                color = if (fromUser) Color.White else NeuroColors.TextPrimary,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChatInputBar(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSend: () -> Unit
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = TextStyle(
+            color = NeuroColors.TextPrimary,
+            fontSize = 17.sp
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .shadow(18.dp, RoundedCornerShape(29.dp), clip = false)
+            .clip(RoundedCornerShape(29.dp))
+            .background(Color.White),
+        decorationBox = { innerTextField ->
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 22.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (value.isBlank()) {
+                        Text("说说现在的感觉", color = NeuroColors.TextMuted, fontSize = 17.sp)
+                    }
+                    innerTextField()
+                }
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(NeuroColors.Blue)
+                        .clickable(onClick = onSend),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("↵", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun SettingsTab(
+    realtime: RealtimeUiState,
+    settings: GuardianSettings,
+    careMode: CareMode,
+    policy: CareModePolicy,
+    wearConnectionStatus: String,
+    feedbackRecords: List<FeedbackRecordEntity>,
+    emotionEvaluations: List<EmotionEvaluationRecordEntity>,
+    thresholdProfiles: List<ThresholdProfileEntity>,
+    sessions: List<TherapySessionEntity>,
+    careLoopRecords: List<CareLoopRecord>,
+    profile: GuardianSettingsSnapshot,
+    onCareModeChange: (CareMode) -> Unit,
+    onSettingsChange: (GuardianSettings) -> Unit,
+    onProfileChange: (GuardianSettingsSnapshot) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenBluetoothSettings: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
+    onConnectWear: () -> Unit,
+    onSendWearBreathPattern: () -> Unit,
+    onContinueMock: () -> Unit,
+    onClearHabitMemory: () -> Unit,
+    onSeedDemoMode: (String) -> Unit,
+    onDebugLog: () -> Unit
+) {
+    val context = LocalContext.current
+    val typingStatus = AccessibilitySignalStore.status(context.applicationContext)
+    val overlayEnabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+        Settings.canDrawOverlays(context.applicationContext)
+    var showDebug by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = 106.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("设置", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(Color(0xFFE6F4FF), Color(0xFFFFE8EF)))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("林", color = NeuroColors.Blue, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("林林", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("UID  NG-2048-0913", color = NeuroColors.TextSecondary)
+                    Text(wearConnectionStatus, color = if (wearConnectionStatus.contains("连接")) NeuroColors.Mint else NeuroColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("›", color = NeuroColors.TextMuted, style = MaterialTheme.typography.headlineMedium)
+            }
+        }
+
+        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+            Text("使用模式", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                CareMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = careMode == mode,
+                        onClick = { onCareModeChange(mode) },
+                        label = { Text(mode.toModeLabel()) }
+                    )
+                }
+            }
+            Text(careModeDescription(careMode), color = NeuroColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+            Text("策略：敏感度 ${"%.0f".format(policy.riskSensitivity * 100)}%，每日提醒上限 ${policy.maxDailyGuardianAlerts}", color = NeuroColors.TextMuted, style = MaterialTheme.typography.labelMedium)
+        }
+
+        NeuroListRow(
+            title = "数据与权限",
+            subtitle = "输入节奏 ${if (typingStatus.accessibilityEnabled) "已开启" else "未开启"} · 悬浮窗 ${if (overlayEnabled) "已开启" else "未开启"}",
+            leading = { SmallStatusDot(NeuroColors.Blue) }
+        )
+        NeuroListRow(
+            title = "开发者调试",
+            subtitle = "模拟输入、无障碍、蓝牙和演示数据",
+            leading = { SmallStatusDot(NeuroColors.Lavender) },
+            trailing = {
+                Text(if (showDebug) "收起" else "›", color = NeuroColors.TextMuted)
+            },
+            modifier = Modifier.clickable { showDebug = !showDebug }
+        )
+
+        if (showDebug) {
+            NeuroCard(modifier = Modifier.fillMaxWidth(), containerColor = NeuroColors.CardSoft) {
+                Text("开发阶段工具", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                Text("实时：心率 ${realtime.packet.heartRate}，呼吸 ${realtime.packet.breathRate}，样本 ${typingStatus.todaySampleCount}", color = NeuroColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                Text("记录：反馈 ${feedbackRecords.size}，情绪评估 ${emotionEvaluations.size}，阈值 ${thresholdProfiles.size}，疗愈 ${sessions.size}，闭环 ${careLoopRecords.size}", color = NeuroColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    NeuroSecondaryButton("切换模拟", onContinueMock, Modifier.weight(1f))
+                    NeuroSecondaryButton("导入演示", { onSeedDemoMode("acceptance_week") }, Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    NeuroSecondaryButton("无障碍", onOpenAccessibilitySettings, Modifier.weight(1f))
+                    NeuroSecondaryButton("蓝牙", onOpenBluetoothSettings, Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    NeuroSecondaryButton("悬浮窗", onOpenOverlaySettings, Modifier.weight(1f))
+                    NeuroSecondaryButton("Debug 日志", onDebugLog, Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    NeuroSecondaryButton("连接手表", onConnectWear, Modifier.weight(1f))
+                    NeuroSecondaryButton("呼吸引导", onSendWearBreathPattern, Modifier.weight(1f))
+                }
+                FilterChip(
+                    selected = settings.watchSimulationEnabled,
+                    onClick = { onSettingsChange(settings.copy(watchSimulationEnabled = !settings.watchSimulationEnabled)) },
+                    label = { Text(if (settings.watchSimulationEnabled) "模拟手表已开启" else "开启模拟手表") }
+                )
+                Slider(
+                    value = settings.simulatedHeartRate.toFloat(),
+                    onValueChange = { onSettingsChange(settings.copy(simulatedHeartRate = it.roundToInt())) },
+                    valueRange = 60f..130f
+                )
+                Text("模拟心率 ${settings.simulatedHeartRate} BPM", color = NeuroColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                Slider(
+                    value = settings.simulatedBreathRate.toFloat(),
+                    onValueChange = { onSettingsChange(settings.copy(simulatedBreathRate = it.roundToInt())) },
+                    valueRange = 8f..32f
+                )
+                Text("模拟呼吸 ${settings.simulatedBreathRate} 次/分", color = NeuroColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                NeuroSecondaryButton("清除本地习惯记忆", onClearHabitMemory, Modifier.fillMaxWidth())
+            }
+        }
+
+        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+            Text("守护资料", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Text("紧急联系人：${profile.guardianName} / ${profile.relationship}", color = NeuroColors.TextSecondary)
+            Text("通知状态：${if (profile.notificationEnabled) "已开启" else "未开启"}", color = NeuroColors.TextSecondary)
+            NeuroPrimaryButton(
+                text = if (profile.notificationEnabled) "关闭守护通知" else "开启守护通知",
+                onClick = { onProfileChange(profile.copy(notificationEnabled = !profile.notificationEnabled)) },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }
 
@@ -316,1111 +1486,210 @@ private fun GentleRiskAlertDialog(
     onSafe: () -> Unit,
     onNeedCompanion: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("检测到状态波动") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("我注意到你的节奏和日常相比有些不一样。你不用解释原因，我们可以先轻轻确认一下。")
-                Text("当前：${event.riskLevel.toRiskLabel(careMode)} / 评分 ${"%.2f".format(event.riskScore)}")
-                Text(event.reasonList().take(2).joinToString("；"))
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onOpenChat) {
-                Text("和我聊聊")
-            }
-        },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onSafe) { Text("我还好") }
-                TextButton(onClick = onNeedCompanion) { Text("想有人陪") }
-                TextButton(onClick = onOpenEvent) { Text("详情") }
-            }
-        }
-    )
-}
-
-@Composable
-private fun TodayMonitorScreen(
-    realtime: RealtimeUiState,
-    summary: DailyMonitoringSummary,
-    chartData: DashboardChartData,
-    careMode: CareMode,
-    events: List<RiskEventEntity>,
-    onOpenEvent: (RiskEventEntity) -> Unit,
-    onNextScenario: () -> Unit
-) {
-    val latestScore = events.firstOrNull()?.riskScore ?: realtime.personalizedRisk.riskScore
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    NeuroAlertDialog(
+        title = "检测到状态波动",
+        confirmText = "和我聊聊",
+        dismissText = "先知道了",
+        onConfirm = onOpenChat,
+        onDismiss = onDismiss
     ) {
-        Text("今日监测", style = MaterialTheme.typography.headlineMedium)
-        Text("当前模式：${careMode.toModeLabel()}", style = MaterialTheme.typography.titleMedium)
-        DailySummaryCard(summary)
-        WeatherContextCard(realtime.weather.displayText())
-        EmotionalStateCard(realtime)
-        ScoreCard(
-            title = "当前状态评分",
-            score = "%.2f".format(latestScore),
-            level = events.firstOrNull()?.riskLevel?.toRiskLabel(careMode) ?: realtime.personalizedRisk.riskLevel.displayName
-        )
-        ChartCard("今日状态评分曲线", chartData.riskScores.ifEmpty { events.toScorePoints(latestScore) })
-        ChartCard("心率曲线", chartData.heartRates.ifEmpty { listOf(realtime.packet.heartRate.toFloat()) }, maxValue = 130f)
-        ChartCard("呼吸频率曲线", chartData.breathRates.ifEmpty { listOf(realtime.packet.breathRate.toFloat()) }, maxValue = 32f)
-        ChartCard("输入速度曲线", chartData.typingSpeeds.ifEmpty { listOf(typingFor(realtime)) }, maxValue = 180f)
-        ChartCard("删除频率曲线", chartData.deleteRates.ifEmpty { listOf(deleteFor(realtime)) }, maxValue = 0.40f)
-        ChartCard("停顿时长曲线", chartData.pauseDurations.ifEmpty { listOf(pauseFor(realtime)) }, maxValue = 8f)
-        MetricGrid(realtime)
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("异常事件列表", style = MaterialTheme.typography.titleMedium)
-                if (events.isEmpty()) {
-                    Text("今天还没有生成风险事件。系统会在状态评分达到观察阈值后记录事件。")
-                } else {
-                    events.forEach { event ->
-                        OutlinedButton(
-                            onClick = { onOpenEvent(event) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("${event.timeRangeText()} / ${event.riskLevel.toRiskLabel(careMode)} / ${"%.2f".format(event.riskScore)}")
-                        }
-                        Text(event.reasonList().joinToString("；"))
-                    }
-                }
-            }
-        }
-        OutlinedButton(onClick = onNextScenario, modifier = Modifier.fillMaxWidth()) {
-            Text("切换模拟监测状态")
+        Text("我注意到你的节奏和日常相比有些不一样。你不用解释原因，我们可以先轻轻确认一下。", color = NeuroColors.TextSecondary)
+        Text("当前：${event.riskLevel.toRiskLabel(careMode)} / 风险 ${"%.0f".format(event.riskScore * 100)}%", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+        Text(event.reasonList().take(2).joinToString("；").ifBlank { "结构化信号出现短暂偏离" }, color = NeuroColors.TextSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onSafe) { Text("我还好", color = NeuroColors.Blue) }
+            TextButton(onClick = onNeedCompanion) { Text("想有人陪", color = NeuroColors.Blue) }
+            TextButton(onClick = onOpenEvent) { Text("详情", color = NeuroColors.Blue) }
         }
     }
 }
 
 @Composable
-private fun SupportChatScreen(
-    realtime: RealtimeUiState,
-    latestEvent: RiskEventEntity?,
-    careMode: CareMode,
-    onBeginSupportConversation: () -> Unit,
-    onSendSupportReply: (String) -> Unit
-) {
-    var draft by remember { mutableStateOf("") }
-
-    LaunchedEffect(Unit) {
-        onBeginSupportConversation()
-    }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("心理陪伴", style = MaterialTheme.typography.headlineMedium)
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("陪护说明", style = MaterialTheme.typography.titleMedium)
-                Text("当前 AI 陪护仍是演示版，能力很有限，不等同于心理咨询。所谓人设和人格模型只是参考情绪标注、近期异常、历史摘要和刚才行为数据做出的简单上下文，不代表 AI 真正理解了你。")
-                Text("如果当前对话显得机械或重复，请以结构化近况和呼吸引导为准；真正高风险情况应联系可信任的人或当地紧急帮助。")
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("当前近况", style = MaterialTheme.typography.titleMedium)
-                Text("状态：${realtime.emotionalState.primaryState} / 置信度 ${"%.0f".format(realtime.emotionalState.confidence * 100)}%")
-                Text("风险：${realtime.personalizedRisk.riskLevel.displayName} / ${"%.2f".format(realtime.personalizedRisk.riskScore)}")
-                Text("身体：心率 ${realtime.packet.heartRate}，呼吸 ${realtime.packet.breathRate}，运动 ${"%.2f".format(realtime.packet.motionLevel)}")
-                Text("节奏：${latestEvent?.reasonList()?.take(2)?.joinToString("；") ?: "暂无新的异常事件"}")
-                Text("模式：${careMode.toModeLabel()}")
-            }
-        }
-
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (realtime.supportMessages.isEmpty()) {
-                    Text("我在。你可以只说一个词，比如“累”“烦”“慌”或“还好”。")
-                } else {
-                    realtime.supportMessages.forEach { message ->
-                        Text(if (message.fromUser) "你：${message.text}" else "NeuroGarden：${message.text}")
-                    }
-                }
-                TextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    label = { Text("说一点现在的感觉") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Button(
-                    onClick = {
-                        val text = draft.trim()
-                        if (text.isNotEmpty()) {
-                            onSendSupportReply(text)
-                            draft = ""
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("发送")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DailySummaryCard(summary: DailyMonitoringSummary) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("今日摘要", style = MaterialTheme.typography.titleMedium)
-            Text(summary.summaryText)
-            Text("最高风险时段：${summary.highestRiskTimeSegment.toSegmentLabel()}")
-            Text("异常事件数量：${summary.riskEventCount}")
-            Text("数据可信度：${summary.dataQualityLevel.toQualityLabel()}")
-            Text("可信度说明：${summary.dataQualityWarning}")
-            if (summary.dataMissingReasons.isNotEmpty()) {
-                Text("缺失项：${summary.dataMissingReasons.joinToString("、")}")
-            }
-            Text("天气因素：${summary.weatherContext}")
-            Text("主要异常指标：${summary.topContributingMetrics.ifEmpty { listOf("暂无") }.joinToString("、")}")
-            Text("反馈统计：${summary.guardianFeedbackCount} 次，确认 ${summary.confirmedAbnormalCount} 次，误报 ${summary.falseAlarmCount} 次")
-        }
-    }
-}
-
-@Composable
-private fun MetricGrid(realtime: RealtimeUiState) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("实时指标", style = MaterialTheme.typography.titleMedium)
-            Text("最近心率来源：${heartRateSource(realtime)}")
-            Text("运动状态：${realtime.bodyState} / motionLevel ${"%.2f".format(realtime.packet.motionLevel)}")
-            Text("打字速度：模拟 ${typingFor(realtime)} 字/分钟")
-            Text("删除频率：模拟 ${"%.2f".format(deleteFor(realtime))}")
-            Text("停顿时长：模拟 ${"%.1f".format(pauseFor(realtime))} 秒")
-            Text("个人基线：${realtime.habitLearningStatus}")
-        }
-    }
-}
-
-@Composable
-private fun EmotionalStateCard(realtime: RealtimeUiState) {
-    val emotion = realtime.emotionalState
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("当前识别的情绪状态", style = MaterialTheme.typography.titleMedium)
-            Text("当前识别：${emotion.primaryState}", style = MaterialTheme.typography.titleLarge)
-            Text("情绪族群：${emotion.emotionFamilyLabel()} / 置信度 ${"%.0f".format(emotion.confidence * 100)}%")
-            if (emotion.secondaryStates.isNotEmpty()) {
-                Text("可能同时伴随：${emotion.secondaryStates.joinToString("、")}")
-            }
-            Text(emotion.explanation)
-            if (emotion.observedClues.isNotEmpty()) {
-                Text("主要证据：${emotion.observedClues.take(3).joinToString("、")}")
-            }
-            if (emotion.counterEvidence.isNotEmpty()) {
-                Text("反证/限制：${emotion.counterEvidence.take(2).joinToString("、")}")
-            }
-            emotion.uncertainty?.let { Text("不确定性：$it") }
-            emotion.interferenceReason?.let { Text(it) }
-            Text(
-                "心情倾向 ${emotion.valenceScore.toValenceText()} · 唤醒 ${emotion.arousalScore.toPercentText()} · 压力 ${emotion.stressScore.toPercentText()} · " +
-                    "疲惫 ${emotion.fatigueScore.toPercentText()} · 陪伴需求 ${emotion.lonelinessScore.toPercentText()}"
-            )
-            Text("可能伴随：${emotion.possibleCompanionStates().joinToString("、")}")
-            Text("情绪不是简单好坏二分；这里展示的是多维状态估计，不是医学诊断。")
-        }
-    }
-}
-
-@Composable
-private fun WeatherContextCard(weatherText: String) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("环境因素", style = MaterialTheme.typography.titleMedium)
-            Text(weatherText)
-            Text("天气会作为状态解释的辅助因素；网络不可用时自动使用 Mock 天气。")
-        }
-    }
-}
-
-@Composable
-private fun EventDetailScreen(
+private fun EventDetailDialog(
     event: RiskEventEntity,
     careMode: CareMode,
-    dataQualityLevel: String,
-    recentEvents: List<RiskEventEntity>,
-    guardianNotificationRecords: List<GuardianNotificationRecord>,
-    guardianFeedbackRecords: List<GuardianFeedbackRecord>,
-    careLoopRecords: List<CareLoopRecord>,
-    feedbackTuningMessage: String?,
-    onBack: () -> Unit,
-    onFeedback: (String) -> Unit,
-    onSimulateGuardianNotification: () -> Unit,
-    onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit
+    onDismiss: () -> Unit,
+    onOpenChat: () -> Unit
 ) {
-    val eventNotifications = guardianNotificationRecords.filter { it.eventId == event.id }
-    val eventGuardianFeedback = guardianFeedbackRecords.filter { it.eventId == event.id }
-    val deviation = SpecialCareService.getSpecialCareDeviationLevel(event, recentEvents, guardianFeedbackRecords)
-    val loop = careLoopRecords.firstOrNull { it.eventId == event.id }
-    val discomfort = DiscomfortBoundaryCalculator.assessEvent(
-        mode = careMode,
-        riskScore = event.riskScore,
-        motionLevel = event.motionLevel,
-        dataQualityLevel = dataQualityLevel,
-        sustained = event.endTime - event.startTime >= 15L * 60L * 1000L,
-        guardianAlreadyNotified = event.guardianNotified
+    NeuroAlertDialog(
+        title = "预警详情",
+        confirmText = "知道了",
+        onConfirm = onDismiss,
+        onDismiss = onDismiss
+    ) {
+        Text("${event.timeRangeText()} · ${event.riskLevel.toRiskLabel(careMode)}", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+        Text(event.reasonList().joinToString("；").ifBlank { "暂无结构化原因。" }, color = NeuroColors.TextSecondary)
+        Text("建议：${event.suggestedAction.ifBlank { "先慢下来，观察一下当前感受。" }}", color = NeuroColors.TextSecondary)
+        Text("Agent：${event.agentAnalysis.ifBlank { "暂无模型补充说明。" }}", color = NeuroColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = onOpenChat) {
+            Text("去话聊", color = NeuroColors.Blue)
+        }
+    }
+}
+
+private fun moodVisual(score: Int): MoodVisual = when {
+    score >= 85 -> MoodVisual(
+        title = "积极",
+        line = "今天节律不错，继续保持。",
+        faceColor = Color(0xFFFFC75D),
+        accentColor = Color(0xFFFF9F43),
+        textColor = Color(0xFFFF8A00)
     )
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("异常事件详情", style = MaterialTheme.typography.headlineMedium)
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("异常时间段：${event.timeRangeText()}")
-                Text("风险评分：${"%.2f".format(event.riskScore)}")
-                Text("置信度：${"%.0f".format(event.confidence * 100)}%")
-                Text("是否建议提醒：${if (event.guardianNotified) "是" else "否"}")
-                Text("反馈结果：${event.guardianFeedback ?: "暂无反馈"}")
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("结构化分析原因", style = MaterialTheme.typography.titleMedium)
-                event.reasonList().forEach { Text("· $it") }
-                Text("分析摘要：${event.agentAnalysis}")
-                Text("建议动作：${event.suggestedAction}")
-                Text("本地算法：基于个人基线偏离、运动干扰、数据可信度和持续性进行安全阀判断。")
-                Text("模型判断：${event.agentAnalysis.toAgentSourceLabel()}")
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("相对个人基线偏离", style = MaterialTheme.typography.titleMedium)
-                Text("心率：${event.heartRateDeviationPercent.signedPercent()}")
-                Text("呼吸：${event.breathRateDeviationPercent.signedPercent()}")
-                Text("打字速度：${event.typingSpeedDeviationPercent.signedPercent()}")
-                Text("删除频率：${event.deleteRateDeviationPercent.signedPercent()}")
-                Text("停顿时长：${event.pauseDurationDeviationPercent.signedPercent()}")
-                Text("运动干扰：${"%.2f".format(event.motionLevel)}")
-                Text("天气：${event.weather} / 时间段：${event.timeSegment}")
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("难受边界复核", style = MaterialTheme.typography.titleMedium)
-                Text("不适分：${discomfort.discomfortScore.toPercentText()}")
-                Text("是否弹窗：${if (discomfort.shouldShowPopup) "是" else "否"}")
-                Text("是否建议守护确认：${if (discomfort.shouldNotifyGuardian) "是" else "否"}")
-                Text("安全阀：${discomfort.confidenceGate}")
-                Text(discomfort.explanation)
-            }
-        }
-        SpecialCareDeviationCard(
-            deviation = deviation,
-            loop = loop,
-            careMode = careMode
-        )
-        GuardianNotificationDetailCard(
-            notifications = eventNotifications,
-            onSimulateGuardianNotification = onSimulateGuardianNotification
-        )
-        GuardianRemoteFeedbackPanel(
-            records = eventGuardianFeedback,
-            currentFeedback = event.guardianFeedback,
-            onFeedback = onRemoteGuardianFeedback
-        )
-        GuardianFeedbackButtons(
-            currentFeedback = event.guardianFeedback,
-            onFeedback = onFeedback
-        )
-        feedbackTuningMessage?.let { message ->
-            Card(Modifier.fillMaxWidth()) {
-                Text(message, modifier = Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
-            Text("返回今日")
-        }
-    }
-}
-
-@Composable
-private fun GuardianFeedbackButtons(
-    currentFeedback: String? = null,
-    onFeedback: (String) -> Unit
-) {
-    val actions = listOf("确认异常", "标记误报", "已联系本人", "继续观察", "提高该类提醒优先级", "降低该类提醒优先级")
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("反馈", style = MaterialTheme.typography.titleMedium)
-            Text("当前反馈：${currentFeedback ?: "暂无，请选择一个反馈"}")
-            actions.forEach { action ->
-                FilterChip(
-                    selected = currentFeedback == action,
-                    onClick = { onFeedback(action) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = {
-                        Text(if (currentFeedback == action) "$action（已选择）" else action)
-                    }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SpecialCareDeviationCard(
-    deviation: SpecialCareDeviationResult,
-    loop: CareLoopRecord?,
-    careMode: CareMode
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("照护闭环", style = MaterialTheme.typography.titleMedium)
-            Text("特殊关怀判断：${if (careMode == CareMode.SPECIAL_CARE) "已启用" else "可作为守护参考"}")
-            Text("状态偏离等级：${deviation.displayText}")
-            Text("系统建议：${deviation.recommendedAction}")
-            Text("建议通知照护者：${if (deviation.notifyGuardianRecommended) "是" else "否"}")
-            Text("闭环状态：${loop?.status?.displayName ?: CareLoopStatus.OPEN.displayName}")
-            deviation.reasons.forEach { Text("· $it") }
-            Text("说明：这是状态偏离分级，不是医学诊断。")
-        }
-    }
-}
-
-@Composable
-private fun GuardianNotificationDetailCard(
-    notifications: List<GuardianNotificationRecord>,
-    onSimulateGuardianNotification: () -> Unit
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("监护人通知", style = MaterialTheme.typography.titleMedium)
-            Text("当前为模拟通知，不会真实发送短信、微信或邮件。")
-            Button(onClick = onSimulateGuardianNotification, modifier = Modifier.fillMaxWidth()) {
-                Text("模拟通知监护人")
-            }
-            if (notifications.isEmpty()) {
-                Text("暂无通知记录。")
-            } else {
-                notifications.take(5).forEach { record ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("${record.sentAt.toReadableTime()} · ${record.status.displayName}")
-                            Text("渠道：${record.channels.joinToString("、") { it.displayName }}")
-                            Text("原因：${record.reason}")
-                            Text("策略：${record.strategyTags.joinToString("、")}")
-                            Text("摘要：${record.messagePreview}")
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun GuardianRemoteFeedbackPanel(
-    records: List<GuardianFeedbackRecord>,
-    currentFeedback: String?,
-    onFeedback: (GuardianFeedbackAction) -> Unit
-) {
-    val actions = listOf(
-        GuardianFeedbackAction.CONTACTED_USER,
-        GuardianFeedbackAction.KEEP_WATCHING,
-        GuardianFeedbackAction.FALSE_POSITIVE,
-        GuardianFeedbackAction.INCREASE_PRIORITY,
-        GuardianFeedbackAction.DECREASE_PRIORITY,
-        GuardianFeedbackAction.REMIND_LATER,
-        GuardianFeedbackAction.MUTE_THIS_EVENT
+    score >= 70 -> MoodVisual(
+        title = "温和",
+        line = "整体还算平稳，适合慢慢推进今天。",
+        faceColor = Color(0xFFDDF4E6),
+        accentColor = Color(0xFF67C18C),
+        textColor = Color(0xFF4E986A)
     )
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("监护人远程反馈模拟", style = MaterialTheme.typography.titleMedium)
-            Text("当前反馈：${currentFeedback ?: records.firstOrNull()?.action?.displayName ?: "暂无"}")
-            actions.forEach { action ->
-                FilterChip(
-                    selected = records.firstOrNull()?.action == action,
-                    onClick = { onFeedback(action) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(action.displayName) }
-                )
-            }
-            if (records.isNotEmpty()) {
-                Text("最近反馈：")
-                records.take(4).forEach { record ->
-                    Text("${record.createdAt.toReadableTime()} · ${record.guardianName} · ${record.action.displayName} · 调参 ${record.sensitivityAdjustment}")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HistoryDashboardScreen(
-    realtime: RealtimeUiState,
-    sessions: List<TherapySessionEntity>,
-    riskEvents: List<RiskEventEntity>,
-    summaries: List<DailyMonitoringSummary>
-) {
-    val averageRisk = riskEvents.map { it.riskScore }.average().takeIf { !it.isNaN() }?.toFloat() ?: 0f
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("历史趋势", style = MaterialTheme.typography.headlineMedium)
-        ChartCard("最近 7 天状态趋势", riskEvents.toScorePoints(realtime.personalizedRisk.riskScore))
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("7 天事件统计", style = MaterialTheme.typography.titleMedium)
-                Text("风险事件：${riskEvents.size} 条")
-                Text("平均评分：${"%.2f".format(averageRisk)}")
-                Text("误报标记：${riskEvents.count { it.isFalseAlarm }} 条")
-                Text("已反馈：${riskEvents.count { it.guardianFeedback != null }} 条")
-            }
-        }
-        summaries.forEach { summary ->
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(summary.date, style = MaterialTheme.typography.titleSmall)
-                    Text("最高评分：${"%.2f".format(summary.maxRiskScore)} / 平均 ${"%.2f".format(summary.averageRiskScore)} / 异常 ${summary.riskEventCount} 条")
-                    Text("误报 ${summary.falseAlarmCount} 条 / 确认 ${summary.confirmedAbnormalCount} 条 / 可信度 ${summary.dataQualityLevel.toQualityLabel()}")
-                    Text("主要指标：${summary.topContributingMetrics.ifEmpty { listOf("暂无") }.joinToString("、")}")
-                    Text("天气关联：${summary.weatherContext}")
-                }
-            }
-        }
-        if (riskEvents.isEmpty() && sessions.isEmpty()) {
-            Text("还没有历史风险事件。")
-        }
-    }
-}
-
-@Composable
-private fun GuardianDashboardScreen(
-    realtime: RealtimeUiState,
-    todaySummary: DailyMonitoringSummary,
-    settings: GuardianSettings,
-    guardianProfile: GuardianSettingsSnapshot,
-    notificationRecords: List<GuardianNotificationRecord>,
-    guardianFeedbackRecords: List<GuardianFeedbackRecord>,
-    careMode: CareMode,
-    policy: CareModePolicy,
-    latestEvent: RiskEventEntity?,
-    onSettingsChange: (GuardianSettings) -> Unit,
-    onGuardianProfileChange: (GuardianSettingsSnapshot) -> Unit,
-    onStartPassiveGuardian: () -> Unit,
-    onStopPassiveGuardian: () -> Unit,
-    onFeedback: (String) -> Unit,
-    onSimulateGuardianNotification: () -> Unit,
-    onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit
-) {
-    val context = LocalContext.current
-    val boundary = DiscomfortBoundaryCalculator.boundaryFor(careMode)
-    val notificationStatus = NotificationPolicyStore.status(
-        context = context.applicationContext,
-        cooldownMs = boundary.cooldownMinutes * 60L * 1000L,
-        maxDailyNotifications = boundary.dailyLimit
+    score >= 55 -> MoodVisual(
+        title = "有点疲惫",
+        line = "今天有点累，可以把节奏放慢一些。",
+        faceColor = Color(0xFFD9E7FF),
+        accentColor = Color(0xFF7BA0D9),
+        textColor = Color(0xFF4772B1)
     )
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("守护", style = MaterialTheme.typography.headlineMedium)
-        Text(careMode.guardianModeDescription(), style = MaterialTheme.typography.bodyMedium)
-        GuardianSettingsPanel(
-            profile = guardianProfile,
-            careMode = careMode,
-            onProfileChange = onGuardianProfileChange
-        )
-        DiscomfortBoundaryCard(careMode)
-        RuntimeGuardStatusCard(
-            realtime = realtime,
-            todaySummary = todaySummary,
-            notificationStatus = notificationStatus
-        )
-        if (careMode == CareMode.SPECIAL_CARE) {
-            Card(Modifier.fillMaxWidth()) {
-                Text("特殊关怀模式会采用更敏感的状态偏离提醒，但仍只处理结构化统计特征，且不提供医疗诊断。", modifier = Modifier.padding(14.dp))
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("守护策略", style = MaterialTheme.typography.titleMedium)
-                Text("当前模式：${careMode.toModeLabel()}")
-                Text("提醒阈值：${"%.2f".format(policy.notificationThreshold)}")
-                Text("每日提醒上限：${policy.maxDailyGuardianAlerts}")
-                Text("最近事件：${latestEvent?.let { "${it.riskLevel.toRiskLabel(careMode)} ${it.timeRangeText()}" } ?: "暂无"}")
-                if (careMode != CareMode.SELF_MONITORING) {
-                    Text("当前联系人：${settings.name} / ${settings.relation}")
-                    Slider(
-                        value = settings.notifyThreshold,
-                        onValueChange = { onSettingsChange(settings.copy(notifyThreshold = it)) },
-                        valueRange = 0.55f..0.95f
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = settings.enabled && careMode != CareMode.SELF_MONITORING,
-                        onClick = { onSettingsChange(settings.copy(enabled = !settings.enabled)) },
-                        enabled = careMode != CareMode.SELF_MONITORING,
-                        label = { Text("授权提醒") }
-                    )
-                    FilterChip(
-                        selected = settings.passiveGuardianRunning,
-                        onClick = {
-                            if (settings.passiveGuardianRunning) onStopPassiveGuardian() else onStartPassiveGuardian()
-                        },
-                        label = { Text(if (settings.passiveGuardianRunning) "守护运行中" else "启动守护") }
-                    )
-                }
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("手表/模拟手表数据", style = MaterialTheme.typography.titleMedium)
-                Text("没有真实手表时，开启这里可以用模拟心率、呼吸和运动干扰参与后台判断。")
-                FilterChip(
-                    selected = settings.watchSimulationEnabled,
-                    onClick = { onSettingsChange(settings.copy(watchSimulationEnabled = !settings.watchSimulationEnabled)) },
-                    label = { Text(if (settings.watchSimulationEnabled) "模拟手表：已开启" else "模拟手表：未开启") }
-                )
-                Text("模拟心率：${settings.simulatedHeartRate} BPM")
-                Slider(
-                    value = settings.simulatedHeartRate.toFloat(),
-                    onValueChange = { onSettingsChange(settings.copy(simulatedHeartRate = it.toInt())) },
-                    valueRange = 60f..130f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text("模拟呼吸：${settings.simulatedBreathRate} 次/分钟")
-                Slider(
-                    value = settings.simulatedBreathRate.toFloat(),
-                    onValueChange = { onSettingsChange(settings.copy(simulatedBreathRate = it.toInt())) },
-                    valueRange = 8f..32f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text("模拟运动干扰：${"%.2f".format(settings.simulatedMotionLevel)}")
-                Slider(
-                    value = settings.simulatedMotionLevel,
-                    onValueChange = { onSettingsChange(settings.copy(simulatedMotionLevel = it)) },
-                    valueRange = 0f..1f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text("测试建议：心率 110，呼吸 25，运动干扰 0.10。然后启动守护，到其他 App 快速打字和删除。")
-            }
-        }
-        if (careMode == CareMode.SELF_MONITORING) {
-            Card(Modifier.fillMaxWidth()) {
-                Text("自我监测模式默认隐藏监护人提醒，只展示个人趋势和温和提醒。", modifier = Modifier.padding(14.dp))
-            }
-        } else {
-            GuardianNotificationHistoryCard(notificationRecords)
-            latestEvent?.let {
-                Button(onClick = onSimulateGuardianNotification, modifier = Modifier.fillMaxWidth()) {
-                    Text("模拟通知监护人")
-                }
-                GuardianRemoteFeedbackPanel(
-                    records = guardianFeedbackRecords.filter { record -> record.eventId == it.id },
-                    currentFeedback = it.guardianFeedback,
-                    onFeedback = onRemoteGuardianFeedback
-                )
-            }
-            GuardianFeedbackButtons(
-                currentFeedback = latestEvent?.guardianFeedback,
-                onFeedback = onFeedback
-            )
-        }
+    score >= 40 -> MoodVisual(
+        title = "低落",
+        line = "今天有点低落，要不要留一点空间给自己？",
+        faceColor = Color(0xFFD8E8F8),
+        accentColor = Color(0xFF6F95BF),
+        textColor = Color(0xFF4F77A3)
+    )
+    score >= 20 -> MoodVisual(
+        title = "吃力",
+        line = "状态有些吃力，需要我陪你缓一会儿吗？",
+        faceColor = Color(0xFFDCE9B9),
+        accentColor = Color(0xFF99B95B),
+        textColor = Color(0xFF658640)
+    )
+    else -> MoodVisual(
+        title = "高压",
+        line = "现在可能很难受，我们先把呼吸放慢一点。",
+        faceColor = Color(0xFFF4A7A2),
+        accentColor = Color(0xFFE35D56),
+        textColor = Color(0xFFC44741)
+    )
+}
+
+private fun latestRiskScore(events: List<RiskEventEntity>, state: RealtimeUiState): Float =
+    (events.firstOrNull()?.riskScore ?: state.personalizedRisk.riskScore).coerceIn(0f, 1f)
+
+private fun riskToMoodScore(risk: Float): Int =
+    (100 - risk.coerceIn(0f, 1f) * 100f).roundToInt().coerceIn(0, 100)
+
+private fun historyMoodScores(
+    summaries: List<DailyMonitoringSummary>,
+    chartData: DashboardChartData
+): List<Int> {
+    val fromSummary = summaries.takeLast(7).map {
+        riskToMoodScore(it.averageRiskScore)
+    }
+    if (fromSummary.any { it < 100 }) return fromSummary
+    val fromChart = chartData.riskScores.takeLast(7).map(::riskToMoodScore)
+    return fromChart.ifEmpty { listOf(68, 72, 78, 84, 86, 81, 86) }
+}
+
+private fun estimatedTemperature(state: RealtimeUiState, risk: Float): Float =
+    (36.4f + state.packet.motionLevel.coerceIn(0f, 1f) * 0.20f + risk.coerceIn(0f, 1f) * 0.18f)
+
+private fun heartTrendLabel(state: RealtimeUiState): String {
+    val delta = state.packet.heartRate - state.packet.baselineHeartRate
+    return when {
+        delta > 8 -> "较平时偏高"
+        delta < -8 -> "较平时偏低"
+        else -> "接近基线"
     }
 }
 
-@Composable
-private fun DiscomfortBoundaryCard(careMode: CareMode) {
-    val boundary = DiscomfortBoundaryCalculator.boundaryFor(careMode)
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("难受边界判定", style = MaterialTheme.typography.titleMedium)
-            Text("观察阈值：${boundary.observeThreshold.toPercentText()} / 弹窗阈值：${boundary.popupThreshold.toPercentText()}")
-            Text("守护确认阈值：${if (boundary.guardianThreshold >= 1f) "关闭" else boundary.guardianThreshold.toPercentText()}")
-            Text("每日上限：${boundary.dailyLimit} 次 / 冷却：${boundary.cooldownMinutes} 分钟")
-            Text(boundary.explanation)
-            Text("最终判断会融合本地结构化算法、MiniMax 模型输出、数据可信度和运动干扰。")
-        }
-    }
+private fun breathStateLabel(rate: Int): String = when {
+    rate <= 0 -> "暂无数据"
+    rate < 12 -> "偏慢"
+    rate <= 20 -> "平稳"
+    else -> "偏快"
 }
 
-@Composable
-private fun GuardianSettingsPanel(
-    profile: GuardianSettingsSnapshot,
-    careMode: CareMode,
-    onProfileChange: (GuardianSettingsSnapshot) -> Unit
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("监护人信息与授权", style = MaterialTheme.typography.titleMedium)
-            Text("当前为模拟通知，不会真实发送给监护人。用户授权后才允许接入真实守护通知。")
-            Text("授权状态：${profile.authorizationStatus.displayName}")
-            TextField(
-                value = profile.guardianName,
-                onValueChange = { onProfileChange(profile.copy(guardianName = it)) },
-                label = { Text("监护人姓名") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            TextField(
-                value = profile.relationship,
-                onValueChange = { onProfileChange(profile.copy(relationship = it)) },
-                label = { Text("关系，例如 父母 / 伴侣 / 朋友") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            TextField(
-                value = profile.phone,
-                onValueChange = { onProfileChange(profile.copy(phone = it)) },
-                label = { Text("手机号") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            TextField(
-                value = profile.wechat,
-                onValueChange = { onProfileChange(profile.copy(wechat = it)) },
-                label = { Text("微信号，可选") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            TextField(
-                value = profile.email,
-                onValueChange = { onProfileChange(profile.copy(email = it)) },
-                label = { Text("邮箱，可选") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GuardianNotificationChannel.entries.forEach { channel ->
-                    FilterChip(
-                        selected = profile.notificationChannels.contains(channel),
-                        onClick = {
-                            val updated = if (profile.notificationChannels.contains(channel)) {
-                                profile.notificationChannels - channel
-                            } else {
-                                profile.notificationChannels + channel
-                            }
-                            onProfileChange(profile.copy(notificationChannels = updated.ifEmpty { listOf(GuardianNotificationChannel.APP) }))
-                        },
-                        label = { Text(channel.displayName) }
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextField(
-                    value = profile.notificationStart,
-                    onValueChange = { onProfileChange(profile.copy(notificationStart = it)) },
-                    label = { Text("开始") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                TextField(
-                    value = profile.notificationEnd,
-                    onValueChange = { onProfileChange(profile.copy(notificationEnd = it)) },
-                    label = { Text("结束") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-            }
-            FilterChip(
-                selected = profile.notificationEnabled,
-                onClick = { onProfileChange(profile.copy(notificationEnabled = !profile.notificationEnabled)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(if (profile.notificationEnabled) "通知：已开启" else "通知：未开启") }
-            )
-            FilterChip(
-                selected = profile.allowNightEmergency,
-                onClick = { onProfileChange(profile.copy(allowNightEmergency = !profile.allowNightEmergency)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("允许夜间重点提醒") }
-            )
-            FilterChip(
-                selected = profile.specialCareEnabled || careMode == CareMode.SPECIAL_CARE,
-                onClick = { onProfileChange(profile.copy(specialCareEnabled = !profile.specialCareEnabled)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("特殊关怀模式辅助策略") }
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { onProfileChange(profile.copy(authorizationStatus = GuardianAuthorizationStatus.AUTHORIZED, notificationEnabled = true)) },
-                    modifier = Modifier.weight(1f)
-                ) { Text("确认授权") }
-                OutlinedButton(
-                    onClick = { onProfileChange(profile.copy(authorizationStatus = GuardianAuthorizationStatus.REVOKED, notificationEnabled = false)) },
-                    modifier = Modifier.weight(1f)
-                ) { Text("撤销授权") }
-            }
-            OutlinedButton(
-                onClick = { onProfileChange(profile.copy(authorizationStatus = GuardianAuthorizationStatus.PENDING, notificationEnabled = false)) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("仅本地体验")
-            }
-            Text("不上传输入原文，不共享聊天内容，只共享摘要、状态偏离等级和结构化原因。本系统不是医疗诊断工具。")
-        }
-    }
-}
+private fun deviceValue(status: String): String =
+    if (status.contains("连接") && !status.contains("未连接") && !status.contains("失败")) "已连接" else "未连接"
 
-@Composable
-private fun GuardianNotificationHistoryCard(records: List<GuardianNotificationRecord>) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("最近通知记录", style = MaterialTheme.typography.titleMedium)
-            if (records.isEmpty()) {
-                Text("暂无模拟通知记录。")
-            } else {
-                records.take(5).forEach { record ->
-                    Text("${record.sentAt.toReadableTime()} · ${record.guardianName} · ${record.status.displayName} · ${record.channels.joinToString("、") { it.displayName }}")
-                    Text("原因：${record.reason}")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RuntimeGuardStatusCard(
-    realtime: RealtimeUiState,
-    todaySummary: DailyMonitoringSummary,
-    notificationStatus: NotificationPolicyStore.Status
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("运行状态", style = MaterialTheme.typography.titleMedium)
-            Text("今日提醒：${notificationStatus.countToday}/${notificationStatus.maxDaily}")
-            Text("冷却剩余：${notificationStatus.cooldownRemainingMinutes} 分钟")
-            Text("现在允许提醒：${if (notificationStatus.canNotifyNow) "是" else "否"}")
-            Text("强提醒数据门槛：${if (todaySummary.dataQualityLevel != "low") "允许" else "仅记录，不强提醒"}")
-            Text("Agent 状态：${realtime.guardianRuntimeStatus.lastAgentStatus}")
-            Text("Agent 说明：${realtime.guardianRuntimeStatus.lastAgentReason}")
-        }
-    }
-}
-
-@Composable
-private fun SettingsDashboardScreen(
-    realtime: RealtimeUiState,
-    settings: GuardianSettings,
-    careMode: CareMode,
-    careModePolicy: CareModePolicy,
-    wearConnectionStatus: String,
-    feedbackRecords: List<FeedbackRecordEntity>,
-    emotionEvaluations: List<EmotionEvaluationRecordEntity>,
-    thresholdProfiles: List<ThresholdProfileEntity>,
-    onCareModeChange: (CareMode) -> Unit,
-    onSettingsChange: (GuardianSettings) -> Unit,
-    onOpenAccessibilitySettings: () -> Unit,
-    onOpenBluetoothSettings: () -> Unit,
-    onOpenOverlaySettings: () -> Unit,
-    onConnectWear: () -> Unit,
-    onSendWearBreathPattern: () -> Unit,
-    onClearHabitMemory: () -> Unit,
-    onSeedDemoMode: (String) -> Unit,
-    onDebugLog: () -> Unit
-) {
-    val context = LocalContext.current
-    val typingStatus = AccessibilitySignalStore.status(context.applicationContext)
-    val overlayEnabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-        Settings.canDrawOverlays(context.applicationContext)
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("设置", style = MaterialTheme.typography.headlineMedium)
-        CareModeSelector(careMode, careModePolicy, onCareModeChange)
-        AgentConfigCard(realtime)
-        DataSourceStatusCard(realtime, settings, wearConnectionStatus)
-        EmotionAcceptanceCard(feedbackRecords, emotionEvaluations, realtime)
-        ThresholdHistoryCard(thresholdProfiles)
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("隐私与权限", style = MaterialTheme.typography.titleMedium)
-                Text("不保存用户输入的完整文字，只保存打字速度、删除频率、停顿时长等统计特征。")
-                Text("Agent 只接收结构化特征，不接收原始文本。健康数据默认本地保存。")
-                Text("监护提醒必须用户授权。本系统不是医疗诊断工具。")
-                Text("健康权限：用于心率、呼吸、运动状态和 Wear OS 数据。")
-                Text("通知权限：用于本地波动提醒、守护确认和照护确认。")
-                Text("网络权限：用于天气数据、Agent API 和可选远程分析；失败时会本地兜底。")
-                OutlinedButton(onClick = onOpenAccessibilitySettings, modifier = Modifier.fillMaxWidth()) {
-                    Text("打开无障碍输入节奏权限")
-                }
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("输入节奏采集状态", style = MaterialTheme.typography.titleMedium)
-                Text("无障碍服务：${if (typingStatus.accessibilityEnabled) "已开启" else "未开启"}")
-                Text("今日输入节奏样本：${typingStatus.todaySampleCount}")
-                Text("最近采集时间：${typingStatus.lastCollectedAt.toReadableTime()}")
-                Text("当前采集中：${if (typingStatus.collectingNow) "是" else "否"}")
-                Text("系统只统计打字速度、删除频率、停顿时长和输入节奏变化。")
-                Text("系统不会保存用户输入原文、聊天内容、密码内容或具体语义文本。")
-                OutlinedButton(onClick = onOpenAccessibilitySettings, modifier = Modifier.fillMaxWidth()) {
-                    Text("前往系统无障碍设置")
-                }
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("设备连接", style = MaterialTheme.typography.titleMedium)
-                Text("连接状态：$wearConnectionStatus")
-                Button(onClick = onConnectWear, modifier = Modifier.fillMaxWidth()) { Text("连接 Wear OS 手表") }
-                OutlinedButton(onClick = onSendWearBreathPattern, modifier = Modifier.fillMaxWidth()) {
-                    Text("发送手表呼吸引导 4/6")
-                }
-                OutlinedButton(onClick = onOpenBluetoothSettings, modifier = Modifier.fillMaxWidth()) { Text("打开蓝牙设置") }
-            }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("悬浮窗提醒", style = MaterialTheme.typography.titleMedium)
-                Text("想要在微信、备忘录等其他 App 里直接弹出提醒，必须开启系统的“在其他应用上层显示”权限。")
-                Text("当前状态：${if (overlayEnabled) "已开启" else "未开启"}")
-                OutlinedButton(onClick = onOpenOverlaySettings, modifier = Modifier.fillMaxWidth()) {
-                    Text("打开悬浮窗权限")
-                }
-            }
-        }
-        DemoModeCard(onSeedDemoMode)
-        Button(onClick = { onSeedDemoMode("integration_demo") }, modifier = Modifier.fillMaxWidth()) {
-            Text("启动联调演示")
-        }
-        OutlinedButton(onClick = onDebugLog, modifier = Modifier.fillMaxWidth()) { Text("查看采集 Debug") }
-        OutlinedButton(onClick = onClearHabitMemory, modifier = Modifier.fillMaxWidth()) { Text("清除本地习惯记忆和风险事件") }
-    }
-}
-
-@Composable
-private fun CareModeSelector(
-    careMode: CareMode,
-    policy: CareModePolicy,
-    onCareModeChange: (CareMode) -> Unit
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("使用模式", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CareMode.entries.forEach { mode ->
-                    FilterChip(
-                        selected = careMode == mode,
-                        onClick = { onCareModeChange(mode) },
-                        label = { Text(mode.toModeLabel()) }
-                    )
-                }
-            }
-            Text("当前策略：敏感度 ${"%.2f".format(policy.riskSensitivity)}，通知阈值 ${"%.2f".format(policy.notificationThreshold)}，隐私级别 ${policy.privacyLevel}")
-        }
-    }
-}
-
-@Composable
-private fun AgentConfigCard(realtime: RealtimeUiState) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Agent 配置", style = MaterialTheme.typography.titleMedium)
-            Text("配置状态：${if (realtime.agentConfigured) "已配置" else "未配置"}")
-            Text("模型：${realtime.agentModel.ifBlank { "未设置" }}")
-            Text("接口模式：${realtime.agentApiMode.ifBlank { "未设置" }}")
-            Text("最近一次请求：${realtime.guardianRuntimeStatus.lastAgentStatus}")
-            Text("最近一次说明：${realtime.guardianRuntimeStatus.lastAgentReason}")
-            Text("不会显示 API Key，也不会把被动采集的输入原文发给 Agent。")
-        }
-    }
-}
-
-@Composable
-private fun DataSourceStatusCard(
-    realtime: RealtimeUiState,
-    settings: GuardianSettings,
-    wearConnectionStatus: String
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("数据源状态", style = MaterialTheme.typography.titleMedium)
-            Text("心率来源：${heartRateSource(realtime)} / 当前 ${realtime.packet.heartRate} BPM")
-            Text("呼吸来源：${heartRateSource(realtime)} / 当前 ${realtime.packet.breathRate} 次/分钟")
-            Text("Wear 连接：$wearConnectionStatus")
-            Text("模拟手表：${if (settings.watchSimulationEnabled) "已开启" else "未开启"}，心率 ${settings.simulatedHeartRate}，呼吸 ${settings.simulatedBreathRate}，运动 ${"%.2f".format(settings.simulatedMotionLevel)}")
-            Text("后台守护：${if (settings.passiveGuardianRunning) "运行中" else "未启动"}")
-            Text("建议演示：无真实手表时开启模拟手表，并把运动干扰保持在 0.10 左右。")
-        }
-    }
-}
-
-@Composable
-private fun EmotionAcceptanceCard(
-    feedbackRecords: List<FeedbackRecordEntity>,
-    emotionEvaluations: List<EmotionEvaluationRecordEntity>,
-    realtime: RealtimeUiState
-) {
-    val recent = feedbackRecords.take(20)
-    val recentEvaluations = emotionEvaluations.take(20)
-    var filter by remember { mutableStateOf("全部") }
-    val filteredEvaluations = when (filter) {
-        "已接受" -> recentEvaluations.filter { it.wasAccepted }
-        "已纠正" -> recentEvaluations.filter { !it.wasAccepted }
-        "高置信" -> recentEvaluations.filter { it.confidence >= 0.70f }
-        "低置信" -> recentEvaluations.filter { it.confidence < 0.55f }
-        else -> recentEvaluations
-    }
-    val labeled = recent.filter { it.source == "emotion_label" || it.userLabel.isNotBlank() }
-    val exact = labeled.count { it.userLabel == it.predictedState || it.predictedState.contains(it.userLabel) || it.userLabel.contains(it.predictedState) }
-    val accepted = recentEvaluations.count { it.wasAccepted }
-    val helpful = recent.count { it.helpful }
-    val falseAlarms = recent.count { it.userLabel.contains("误报") || !it.helpful }
-    val hitRate = if (labeled.isEmpty()) 0f else exact.toFloat() / labeled.size.toFloat()
-    val evaluationHitRate = if (recentEvaluations.isEmpty()) 0f else accepted.toFloat() / recentEvaluations.size.toFloat()
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("情绪识别验收", style = MaterialTheme.typography.titleMedium)
-            Text("当前识别：${realtime.emotionalState.primaryState} / 置信度 ${"%.0f".format(realtime.emotionalState.confidence * 100)}%")
-            Text("近 20 条反馈：${recent.size} 条，有帮助 $helpful 条，误报/无帮助 $falseAlarms 条")
-            Text("粗略标签命中：${"%.0f".format(hitRate * 100)}%（基于用户自评标签和系统预测文本匹配）")
-            Text("评估样本：${recentEvaluations.size} 条，用户接受 ${accepted} 条，接受率 ${"%.0f".format(evaluationHitRate * 100)}%")
-            Text("常见用户标注：${labeled.groupingBy { it.userLabel }.eachCount().entries.sortedByDescending { it.value }.take(4).joinToString("、") { "${it.key}(${it.value})" }.ifBlank { "暂无" }}")
-            Text("最近纠正：${recentEvaluations.take(3).joinToString("、") { "${it.predictedPrimaryEmotion}->${it.userCorrectedEmotion}" }.ifBlank { "暂无" }}")
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("全部", "已接受", "已纠正", "高置信", "低置信").forEach { option ->
-                    FilterChip(
-                        selected = filter == option,
-                        onClick = { filter = option },
-                        label = { Text(option) }
-                    )
-                }
-            }
-            if (filteredEvaluations.isEmpty()) {
-                Text("当前筛选下暂无评估记录。")
-            } else {
-                filteredEvaluations.take(5).forEach { record ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("${record.createdAt.toReadableTime()} · ${if (record.wasAccepted) "用户接受" else "用户纠正"}")
-                            Text("预测：${record.predictedPrimaryEmotion}${record.predictedSecondaryEmotions.toSecondaryLabel()} → 用户：${record.userCorrectedEmotion}")
-                            Text("置信度 ${"%.0f".format(record.confidence * 100)}% · 愉悦 ${record.valence.toValenceText()} · 唤醒 ${record.arousal.toPercentText()} · 压力 ${record.stress.toPercentText()}")
-                            Text("信号：${record.signalSummary}")
-                            Text("场景：${record.contextSummary}")
-                            Text("Agent：${record.agentVersion}")
-                        }
-                    }
-                }
-            }
-            Text("这个卡片用于验收趋势，不代表医学准确率。")
-        }
-    }
-}
-
-@Composable
-private fun ThresholdHistoryCard(thresholdProfiles: List<ThresholdProfileEntity>) {
-    val latest = thresholdProfiles.firstOrNull()
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("反馈调参记录", style = MaterialTheme.typography.titleMedium)
-            if (latest == null) {
-                Text("暂无阈值记录。")
-            } else {
-                Text("当前来源：${latest.updatedBy} / ${latest.updatedReason}")
-                Text("当前阈值：心率 +${"%.1f".format(latest.heartRateDeltaWarning)}，呼吸 ${"%.1f".format(latest.breathRateWarning)}，输入偏离 ${latest.typingSpeedDeltaWarning.toPercentText()}，删除 ${latest.deleteRateWarning.toPercentText()}，停顿 ${"%.1f".format(latest.pauseDurationWarning)} 秒")
-                thresholdProfiles.take(5).forEach { profile ->
-                    Text("${profile.updatedAt.toReadableTime()} · ${profile.updatedBy} · ${profile.updatedReason}")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DemoModeCard(onSeedDemoMode: (String) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Demo Mode", style = MaterialTheme.typography.titleMedium)
-            Text("写入结构化模拟数据，用于演示今日摘要、历史趋势和反馈调参。")
-            OutlinedButton(onClick = { onSeedDemoMode("stable_day") }, modifier = Modifier.fillMaxWidth()) { Text("模拟稳定一天") }
-            OutlinedButton(onClick = { onSeedDemoMode("mild_wave") }, modifier = Modifier.fillMaxWidth()) { Text("模拟轻度波动") }
-            OutlinedButton(onClick = { onSeedDemoMode("night_event") }, modifier = Modifier.fillMaxWidth()) { Text("模拟夜间异常") }
-            OutlinedButton(onClick = { onSeedDemoMode("guardian_confirmed") }, modifier = Modifier.fillMaxWidth()) { Text("模拟监护人确认后调参") }
-            OutlinedButton(onClick = { onSeedDemoMode("acceptance_week") }, modifier = Modifier.fillMaxWidth()) { Text("导入多日验收数据") }
-        }
-    }
-}
-
-@Composable
-private fun ScoreCard(title: String, score: String, level: String) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(score, style = MaterialTheme.typography.displaySmall)
-            Text(level)
-        }
-    }
-}
-
-@Composable
-private fun ChartCard(title: String, points: List<Float>, maxValue: Float = 1f) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Canvas(Modifier.fillMaxWidth().height(120.dp)) {
-                val path = Path()
-                points.forEachIndexed { index, raw ->
-                    val x = size.width * index / max(1, points.lastIndex)
-                    val normalized = (raw / maxValue).coerceIn(0f, 1f)
-                    val y = size.height - normalized * size.height
-                    if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                    drawCircle(Color(0xFF6EE7D8), 5f, Offset(x, y))
-                }
-                drawPath(path, Color(0xFF6EE7D8), style = Stroke(width = 4f))
-            }
-        }
-    }
-}
-
-private fun List<RiskEventEntity>.toScorePoints(fallback: Float): List<Float> {
-    val points = takeLast(8).map { it.riskScore }
-    return points.ifEmpty { listOf(0.18f, 0.22f, 0.31f, fallback) }
-}
-
-private fun RiskEventEntity.reasonList(): List<String> =
-    mainReasons.split("|").map { it.trim() }.filter { it.isNotEmpty() }
-
-private fun RiskEventEntity.timeRangeText(): String {
-    val format = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-    return if (startTime == endTime) {
-        format.format(Date(startTime))
-    } else {
-        "${format.format(Date(startTime))} - ${format.format(Date(endTime))}"
-    }
-}
-
-private fun String.toAgentSourceLabel(): String =
+private fun deviceSubtitle(status: String): String =
     when {
-        contains("Mock", ignoreCase = true) -> "Mock fallback，根据本地规则给出补充建议。"
-        contains("MiniMax", ignoreCase = true) -> "MiniMax 基于结构化数据给出二次评判。"
-        contains("acceptance_seed", ignoreCase = true) -> "验收数据内置解释，用于演示闭环。"
-        contains("source=", ignoreCase = true) -> "Agent 或规则模块已返回结构化解释。"
-        else -> "暂无模型解释，使用本地规则兜底。"
+        status.contains("未连接") -> "连接手表"
+        status.contains("失败") -> "检查蓝牙"
+        else -> status.take(18)
     }
+
+private fun relativeTime(timestamp: Long): String {
+    if (timestamp <= 0L) return "暂无数据"
+    val minutes = max(0L, (System.currentTimeMillis() - timestamp) / 60000L)
+    return when {
+        minutes < 1 -> "刚刚"
+        minutes < 60 -> "${minutes} 分钟前"
+        else -> "${minutes / 60} 小时前"
+    }
+}
+
+private fun sphereColor(score: Int): Color = when {
+    score >= 70 -> NeuroColors.Teal
+    score >= 55 -> Color(0xFF7CB8F0)
+    score >= 40 -> Color(0xFF8DA7D4)
+    score >= 20 -> Color(0xFFD88581)
+    else -> Color(0xFFD94E4B)
+}
+
+private fun sphereSpeed(score: Int): Int = when {
+    score >= 70 -> 13000
+    score >= 55 -> 16000
+    score >= 40 -> 19000
+    score >= 20 -> 9500
+    else -> 7600
+}
+
+private fun breathSpeed(score: Int): Int = when {
+    score >= 70 -> 5200
+    score >= 55 -> 6600
+    score >= 40 -> 7600
+    score >= 20 -> 3300
+    else -> 2600
+}
+
+private fun eventColor(score: Float): Color = when {
+    score >= 0.80f -> NeuroColors.Danger
+    score >= 0.55f -> NeuroColors.Amber
+    else -> NeuroColors.Blue
+}
+
+private fun todayNotificationCount(records: List<GuardianNotificationRecord>): Int {
+    val start = System.currentTimeMillis().startOfDay()
+    return records.count { it.sentAt >= start }
+}
+
+private fun guardianEvaluation(
+    realtime: RealtimeUiState,
+    summary: DailyMonitoringSummary,
+    latestEvent: RiskEventEntity?
+): String {
+    val agentReason = realtime.guardianRuntimeStatus.lastAgentReason
+    if (agentReason.isNotBlank() && agentReason != "等待结构化数据") {
+        return agentReason
+    }
+    latestEvent?.let {
+        return "今天出现过一次 ${it.riskLevel.toRiskLabel()}，主要来自 ${it.reasonList().take(2).joinToString("、")}。当前建议继续观察输入节奏和身体信号的同步变化。"
+    }
+    return summary.summaryText.ifBlank { "今天整体处于可观察范围内，建议保持温和提醒，并继续积累个人基线。" }
+}
+
+private fun careModeDescription(mode: CareMode): String = when (mode) {
+    CareMode.SELF_MONITORING -> "提醒更克制，数据主要用于自己查看。"
+    CareMode.FAMILY_GUARDIAN -> "在明显波动时可通知守护联系人。"
+    CareMode.SPECIAL_CARE -> "提醒更敏感，但每日打扰次数受限。"
+}
+
+private fun CareMode.toModeLabel(): String = when (this) {
+    CareMode.SELF_MONITORING -> "自我检测"
+    CareMode.FAMILY_GUARDIAN -> "家庭守护"
+    CareMode.SPECIAL_CARE -> "特殊关怀"
+}
 
 private fun String.toRiskLabel(mode: CareMode = CareMode.FAMILY_GUARDIAN): String = when (mode) {
     CareMode.SELF_MONITORING -> when (this) {
@@ -1447,81 +1716,17 @@ private fun String.toRiskLabel(mode: CareMode = CareMode.FAMILY_GUARDIAN): Strin
     }
 }
 
-private fun CareMode.toModeLabel(): String = when (this) {
-    CareMode.SELF_MONITORING -> "自我监测"
-    CareMode.FAMILY_GUARDIAN -> "家庭守护"
-    CareMode.SPECIAL_CARE -> "特殊关怀"
-}
+private fun RiskEventEntity.reasonList(): List<String> =
+    mainReasons.split("|").map { it.trim() }.filter { it.isNotEmpty() }
 
-private fun CareMode.guardianModeDescription(): String = when (this) {
-    CareMode.SELF_MONITORING -> "当前为自我监测模式，默认不通知监护人，提醒文案更温和。"
-    CareMode.FAMILY_GUARDIAN -> "当前为家庭守护模式，可使用守护提醒和反馈调参。"
-    CareMode.SPECIAL_CARE -> "当前为特殊关怀模式，提醒更敏感，同时限制每日提醒次数并强化隐私提示。"
-}
-
-private fun String.toQualityLabel(): String = when (this) {
-    "high" -> "高"
-    "medium" -> "中"
-    "low" -> "低"
-    else -> this
-}
-
-private fun String.toSegmentLabel(): String = when (this) {
-    "late_night" -> "凌晨"
-    "morning" -> "上午"
-    "afternoon" -> "下午"
-    "night" -> "夜间"
-    "none" -> "暂无"
-    else -> this
-}
-
-private fun Float.signedPercent(): String =
-    "${if (this >= 0f) "+" else ""}${"%.0f".format(this)}%"
-
-private fun Float.toPercentText(): String =
-    "${"%.0f".format((this * 100f).coerceIn(0f, 100f))}%"
-
-private fun Float.toValenceText(): String {
-    val value = coerceIn(-1f, 1f)
-    val label = when {
-        value >= 0.45f -> "偏舒展"
-        value >= 0.15f -> "偏平稳"
-        value > -0.15f -> "中性"
-        value > -0.45f -> "偏低"
-        else -> "明显偏低"
+private fun RiskEventEntity.timeRangeText(): String {
+    val format = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+    return if (startTime == endTime) {
+        format.format(Date(startTime))
+    } else {
+        "${format.format(Date(startTime))} - ${format.format(Date(endTime))}"
     }
-    return "$label ${"%.0f".format(((value + 1f) / 2f) * 100)}%"
 }
-
-private fun com.neurogarden.app.algorithm.EmotionalStateEstimate.emotionFamilyLabel(): String =
-    emotionFamilyOverride ?: when (primaryState) {
-        "平静", "专注", "轻松" -> "正向或中性状态"
-        "积极活跃" -> "高唤醒正向状态"
-        "紧张", "烦躁", "压力偏高" -> "高唤醒压力状态"
-        "疲惫", "低落", "孤独", "空落" -> "低能量或陪伴需求"
-        "平静专注", "轻松平稳", "积极活跃", "安静恢复", "相对稳定" -> "正向或中性状态"
-        "轻微压力偏离", "高压紧张", "焦虑紧绷" -> "高唤醒压力状态"
-        "疲惫恢复慢", "低落疲惫", "可能需要陪伴" -> "低能量或陪伴需求"
-        "学习日常节奏中", "学习中", "信号不足", "运动干扰" -> "暂不确定"
-        else -> "复合状态"
-    }
-
-private fun com.neurogarden.app.algorithm.EmotionalStateEstimate.possibleCompanionStates(): List<String> {
-    val states = buildList {
-        if (arousalScore >= 0.55f) add("紧绷")
-        if (stressScore >= 0.45f) add("压力")
-        if (fatigueScore >= 0.48f) add("疲惫")
-        if (lonelinessScore >= 0.48f) add("需要陪伴")
-        if (valenceScore >= 0.45f && stressScore < 0.35f) add("轻松")
-        if (arousalScore in 0.25f..0.62f && stressScore < 0.38f) add("专注")
-        if (arousalScore in 0.35f..0.70f && valenceScore >= 0.30f) add("活跃")
-        if (fatigueScore in 0.30f..0.55f && stressScore < 0.40f) add("恢复中")
-    }.distinct()
-    return states.ifEmpty { listOf("继续观察") }.take(4)
-}
-
-private fun heartRateSource(state: RealtimeUiState): String =
-    if (state.bodyState.contains("Wear OS") || state.bodyState.contains("实时采集")) "Real" else "Mock"
 
 private fun Long.toReadableTime(): String =
     if (this <= 0L) {
@@ -1530,32 +1735,12 @@ private fun Long.toReadableTime(): String =
         SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(this))
     }
 
-private fun String.toSecondaryLabel(): String =
-    split("|")
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .take(3)
-        .joinToString("、", prefix = "（", postfix = "）")
-        .takeIf { it != "（）" }
-        .orEmpty()
-
-private fun typingFor(state: RealtimeUiState): Float = when (state.scenario.name) {
-    "CALM" -> 118f
-    "TENSE" -> 92f
-    "ANXIOUS" -> 68f
-    else -> 84f
-}
-
-private fun deleteFor(state: RealtimeUiState): Float = when (state.scenario.name) {
-    "CALM" -> 0.03f
-    "TENSE" -> 0.09f
-    "ANXIOUS" -> 0.19f
-    else -> 0.12f
-}
-
-private fun pauseFor(state: RealtimeUiState): Float = when (state.scenario.name) {
-    "CALM" -> 1.2f
-    "TENSE" -> 2.1f
-    "ANXIOUS" -> 3.8f
-    else -> 2.6f
+private fun Long.startOfDay(): Long {
+    val calendar = java.util.Calendar.getInstance()
+    calendar.timeInMillis = this
+    calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    calendar.set(java.util.Calendar.MINUTE, 0)
+    calendar.set(java.util.Calendar.SECOND, 0)
+    calendar.set(java.util.Calendar.MILLISECOND, 0)
+    return calendar.timeInMillis
 }

@@ -16,10 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -53,6 +50,7 @@ import com.neurogarden.app.guardian.SpecialCareService
 import com.neurogarden.app.ui.screen.DebugLogScreen
 import com.neurogarden.app.ui.screen.GuardianSettings
 import com.neurogarden.app.ui.screen.MainDashboardScreen
+import com.neurogarden.app.ui.component.NeuroAlertDialog
 import com.neurogarden.app.ui.component.PermissionRequestDialog
 import com.neurogarden.app.ui.component.PermissionChecker
 import com.neurogarden.app.ui.theme.NeuroGardenTheme
@@ -429,35 +427,22 @@ private fun NeuroGardenRoot(
     }
 
     pendingPassiveAlert?.let { alert ->
-        AlertDialog(
-            onDismissRequest = {
+        NeuroAlertDialog(
+            title = alert.title,
+            confirmText = "进入陪伴",
+            dismissText = "知道了",
+            onDismiss = {
                 PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
                 pendingPassiveAlert = null
             },
-            title = { Text(alert.title) },
-            text = { Text(alert.message) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
-                        pendingPassiveAlert = null
-                        localOpenChatRequest += 1
-                    }
-                ) {
-                    Text("进入陪伴")
-                }
+            onConfirm = {
+                PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
+                pendingPassiveAlert = null
+                localOpenChatRequest += 1
             },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
-                        pendingPassiveAlert = null
-                    }
-                ) {
-                    Text("知道了")
-                }
-            }
-        )
+        ) {
+            Text(alert.message)
+        }
     }
 
 }

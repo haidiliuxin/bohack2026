@@ -4,8 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,15 +14,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -135,78 +129,55 @@ fun PermissionRequestDialog(
         }
     }
 
-    // 是否所有必要权限都已授权
-    val allRequiredGranted = permissionStates.filter { (_, granted) -> granted }.keys.size ==
-            permissionsToRequest.filter { it.isRequired }.size
-
-    AlertDialog(
-        onDismissRequest = { onDismiss() },
-        title = {
+    NeuroAlertDialog(
+        title = "欢迎使用 NeuroGarden",
+        confirmText = "授权必要权限",
+        dismissText = "稍后再说",
+        onConfirm = onRequestPermissions,
+        onDismiss = onDismiss
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+        ) {
             Text(
-                text = "欢迎使用 NeuroGarden",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+                text = "为了提供更好的守护服务，需要以下权限：",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(bottom = 16.dp)
             )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-            ) {
-                Text(
-                    text = "为了提供更好的守护服务，需要以下权限：",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 16.dp)
+
+            permissionsToRequest.forEach { permInfo ->
+                val isGranted = permissionStates[permInfo.permission] == true
+                PermissionCard(
+                    permissionInfo = permInfo,
+                    isGranted = isGranted
                 )
-
-                permissionsToRequest.forEach { permInfo ->
-                    val isGranted = permissionStates[permInfo.permission] == true
-                    PermissionCard(
-                        permissionInfo = permInfo,
-                        isGranted = isGranted
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
                 Spacer(modifier = Modifier.height(8.dp))
+            }
 
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            text = "隐私说明",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "• 不保存用户输入的原始文字内容\n" +
-                                    "• 不上传任何聊天记录或消息\n" +
-                                    "• 只采集打字速度、删除率等统计特征\n" +
-                                    "• 所有数据仅本地处理",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+            Spacer(modifier = Modifier.height(8.dp))
+
+            NeuroCard(modifier = Modifier.fillMaxWidth(), containerColor = NeuroColors.CardSoft) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "隐私说明",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "• 不保存用户输入的原始文字内容\n" +
+                                "• 不上传任何聊天记录或消息\n" +
+                                "• 只采集打字速度、删除率等统计特征\n" +
+                                "• 所有数据仅本地处理",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-            }
-        },
-        confirmButton = {
-            Button(onClick = onRequestPermissions) {
-                Text("授权必要权限")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("稍后再说")
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -218,9 +189,9 @@ private fun PermissionCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = if (isGranted)
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                NeuroColors.BlueSoft
             else
-                MaterialTheme.colorScheme.surface
+                NeuroColors.Card
         )
     ) {
         Row(
