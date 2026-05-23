@@ -966,6 +966,14 @@ private fun EmotionAcceptanceCard(
 ) {
     val recent = feedbackRecords.take(20)
     val recentEvaluations = emotionEvaluations.take(20)
+    var filter by remember { mutableStateOf("全部") }
+    val filteredEvaluations = when (filter) {
+        "已接受" -> recentEvaluations.filter { it.wasAccepted }
+        "已纠正" -> recentEvaluations.filter { !it.wasAccepted }
+        "高置信" -> recentEvaluations.filter { it.confidence >= 0.70f }
+        "低置信" -> recentEvaluations.filter { it.confidence < 0.55f }
+        else -> recentEvaluations
+    }
     val labeled = recent.filter { it.source == "emotion_label" || it.userLabel.isNotBlank() }
     val exact = labeled.count { it.userLabel == it.predictedState || it.predictedState.contains(it.userLabel) || it.userLabel.contains(it.predictedState) }
     val accepted = recentEvaluations.count { it.wasAccepted }
@@ -982,6 +990,31 @@ private fun EmotionAcceptanceCard(
             Text("评估样本：${recentEvaluations.size} 条，用户接受 ${accepted} 条，接受率 ${"%.0f".format(evaluationHitRate * 100)}%")
             Text("常见用户标注：${labeled.groupingBy { it.userLabel }.eachCount().entries.sortedByDescending { it.value }.take(4).joinToString("、") { "${it.key}(${it.value})" }.ifBlank { "暂无" }}")
             Text("最近纠正：${recentEvaluations.take(3).joinToString("、") { "${it.predictedPrimaryEmotion}->${it.userCorrectedEmotion}" }.ifBlank { "暂无" }}")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("全部", "已接受", "已纠正", "高置信", "低置信").forEach { option ->
+                    FilterChip(
+                        selected = filter == option,
+                        onClick = { filter = option },
+                        label = { Text(option) }
+                    )
+                }
+            }
+            if (filteredEvaluations.isEmpty()) {
+                Text("当前筛选下暂无评估记录。")
+            } else {
+                filteredEvaluations.take(5).forEach { record ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("${record.createdAt.toReadableTime()} · ${if (record.wasAccepted) "用户接受" else "用户纠正"}")
+                            Text("预测：${record.predictedPrimaryEmotion}${record.predictedSecondaryEmotions.toSecondaryLabel()} → 用户：${record.userCorrectedEmotion}")
+                            Text("置信度 ${"%.0f".format(record.confidence * 100)}% · 愉悦 ${record.valence.toValenceText()} · 唤醒 ${record.arousal.toPercentText()} · 压力 ${record.stress.toPercentText()}")
+                            Text("信号：${record.signalSummary}")
+                            Text("场景：${record.contextSummary}")
+                            Text("Agent：${record.agentVersion}")
+                        }
+                    }
+                }
+            }
             Text("这个卡片用于验收趋势，不代表医学准确率。")
         }
     }
@@ -1185,6 +1218,15 @@ private fun Long.toReadableTime(): String =
     } else {
         SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(this))
     }
+
+private fun String.toSecondaryLabel(): String =
+    split("|")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .take(3)
+        .joinToString("、", prefix = "（", postfix = "）")
+        .takeIf { it != "（）" }
+        .orEmpty()
 
 private fun typingFor(state: RealtimeUiState): Float = when (state.scenario.name) {
     "CALM" -> 118f

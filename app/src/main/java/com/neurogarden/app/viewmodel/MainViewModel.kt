@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.neurogarden.app.BuildConfig
 import com.neurogarden.app.agent.AgentSignalRequest
 import com.neurogarden.app.agent.AgentSignalResponse
+import com.neurogarden.app.agent.AgentPromptVersions
 import com.neurogarden.app.agent.CompanionContextBuilder
 import com.neurogarden.app.agent.GuardianAgentApi
 import com.neurogarden.app.agent.SupportConversationMessageDto
@@ -360,6 +361,7 @@ class MainViewModel(
                 fallbackUsed = agentResponse.isMockFallback(),
                 fallbackReason = agentResponse.reason.takeIf { agentResponse.isMockFallback() },
                 requestSummary = "signals=${agentRequest.recentSignals.size};risk=${"%.2f".format(agentRequest.latestRiskScore)};level=${agentRequest.latestRiskLevel};weather=${agentRequest.weather ?: "none"};segment=${agentRequest.timeSegment ?: "none"}",
+                promptVersion = AgentPromptVersions.SIGNAL_ANALYSIS,
                 latencyMs = agentLatencyMs
             )
             val latestQuality = DataQualityEvaluator.evaluate(
@@ -936,6 +938,7 @@ class MainViewModel(
             fallbackUsed = fallbackUsed,
             fallbackReason = response.reason.takeIf { fallbackUsed },
             requestSummary = "signals=${request.recentSignals.size};risk=${"%.2f".format(request.latestRiskScore)};level=${request.latestRiskLevel};weather=${request.weather ?: "none"};segment=${request.timeSegment ?: "none"}",
+            promptVersion = AgentPromptVersions.SIGNAL_ANALYSIS,
             latencyMs = agentLatencyMs,
             requestTime = demoNow
         )

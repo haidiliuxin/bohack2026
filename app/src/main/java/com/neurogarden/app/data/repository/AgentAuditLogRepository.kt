@@ -15,6 +15,7 @@ class AgentAuditLogRepository(private val dao: AgentAuditLogDao) {
         fallbackReason: String?,
         cacheUsed: Boolean = false,
         requestSummary: String = "",
+        promptVersion: String = "unknown",
         latencyMs: Long = 0L,
         requestTime: Long = System.currentTimeMillis()
     ) {
@@ -29,6 +30,7 @@ class AgentAuditLogRepository(private val dao: AgentAuditLogDao) {
                 confidence = response?.confidence ?: 0f,
                 mainReasons = response?.mainReasons.orEmpty().take(3).joinToString("|"),
                 requestSummary = requestSummary,
+                promptVersion = promptVersion,
                 latencyMs = latencyMs,
                 fallbackUsed = fallbackUsed,
                 fallbackReason = fallbackReason,

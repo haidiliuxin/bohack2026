@@ -12,6 +12,7 @@ import android.os.IBinder
 import com.neurogarden.app.MainActivity
 import com.neurogarden.app.NeuroGardenApp
 import com.neurogarden.app.agent.AgentSignalRequest
+import com.neurogarden.app.agent.AgentPromptVersions
 import com.neurogarden.app.agent.CompanionContextBuilder
 import com.neurogarden.app.agent.toDto
 import com.neurogarden.app.algorithm.CareMode
@@ -149,6 +150,7 @@ class PassiveGuardianService : Service() {
             fallbackUsed = fallbackUsed,
             fallbackReason = agent.reason.takeIf { fallbackUsed },
             requestSummary = "signals=${agentRequest.recentSignals.size};risk=${"%.2f".format(agentRequest.latestRiskScore)};level=${agentRequest.latestRiskLevel};weather=${agentRequest.weather ?: "none"};segment=${agentRequest.timeSegment ?: "none"}",
+            promptVersion = AgentPromptVersions.SIGNAL_ANALYSIS,
             latencyMs = agentLatencyMs,
             requestTime = now
         )

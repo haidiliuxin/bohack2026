@@ -40,4 +40,5 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("com.google.android.gms:play-services-wearable:18.2.0")
     implementation("androidx.health:health-services-client:1.1.0-alpha05")
+    implementation("com.google.guava:guava:33.3.1-android")
 }

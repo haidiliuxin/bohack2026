@@ -15,6 +15,7 @@ data class AgentAuditLogEntity(
     val confidence: Float,
     val mainReasons: String,
     val requestSummary: String,
+    val promptVersion: String,
     val latencyMs: Long,
     val fallbackUsed: Boolean,
     val fallbackReason: String?,
