@@ -86,7 +86,9 @@ object SignalPreprocessor {
         val typingRush = deviations["typingSpeed"].orZero().positive()
         val deleteLift = (cleaned.deleteRate / thresholds.deleteRateWarning).coerceIn(0f, 2f) / 2f
         val pauseLift = (cleaned.pauseDuration / thresholds.pauseDurationWarning).coerceIn(0f, 2f) / 2f
-        val night = nightWeight(cleaned.timestamp)
+        val hour = hourOfDay(cleaned.timestamp)
+        val night = nightWeight(hour)
+        val evening = eveningWeight(hour)
         val observed = buildList {
             if (heartLift > 0.18f) add("心率相对个人基线升高")
             if (breathLift > 0.16f) add("呼吸相对个人基线偏快")
@@ -129,29 +131,47 @@ object SignalPreprocessor {
             .motionAdjusted(cleaned.motionLevel)
             .coerceIn(0f, 1f)
         val loneliness = (pauseLift * 0.40f + night * 0.32f + typingDrop * 0.28f).coerceIn(0f, 1f)
-        val primary = when {
+        val patternPrimary = classifyByFeaturePattern(
+            cleaned = cleaned,
+            scene = scene,
+            hour = hour,
+            heartLift = heartLift,
+            breathLift = breathLift,
+            typingDrop = typingDrop,
+            typingRush = typingRush,
+            deleteLift = deleteLift,
+            pauseLift = pauseLift,
+            stress = stress,
+            fatigue = fatigue,
+            arousal = arousal,
+            loneliness = loneliness,
+            motionInterference = motionInterference
+        )
+        val primary = patternPrimary ?: when {
             qualityLevel == "low" -> "不确定"
             motionInterference == "high" -> "运动干扰"
             scene in listOf("video_app", "game_app") && arousal >= 0.42f && stress < 0.50f -> "积极活跃"
             typingRush > 0.30f && deleteLift < 0.30f && pauseLift < 0.35f && stress < 0.45f -> "专注"
             stress >= 0.60f && deleteLift >= 0.48f -> "烦躁"
+            stress >= 0.58f && heartLift >= 0.34f && breathLift >= 0.42f && pauseLift >= 0.50f -> "焦虑"
             stress >= 0.55f -> "紧张"
-            fatigue >= 0.56f && loneliness >= 0.48f && night > 0.5f -> "空落"
-            fatigue >= 0.52f -> "疲惫"
-            loneliness >= 0.58f -> "孤独"
+            fatigue >= 0.56f && loneliness >= 0.48f && (night > 0.5f || evening > 0.5f) -> "空落"
+            fatigue >= 0.52f && evening < 0.5f -> "疲惫"
+            loneliness >= 0.58f -> "空落"
             arousal >= 0.45f && stress < 0.36f -> "积极活跃"
-            arousal < 0.25f && stress < 0.28f && fatigue < 0.35f -> "轻松"
+            arousal < 0.25f && stress < 0.28f && fatigue < 0.35f -> "平静"
             else -> "平静"
         }
         val candidates = buildList {
             add(primary)
-            if (stress >= 0.42f) addAll(listOf("压力偏高", "紧张"))
+            if (stress >= 0.42f) addAll(listOf("紧张", "焦虑"))
             if (fatigue >= 0.42f) add("疲惫")
             if (loneliness >= 0.42f) add("空落")
             if (arousal >= 0.42f && stress < 0.45f) add("专注")
             if (scene in listOf("video_app", "game_app") && arousal >= 0.38f) add("积极活跃")
             if (scene == "chat_app" && deleteLift >= 0.42f) add("烦躁")
-            if (primary in listOf("平静", "轻松")) add("专注")
+            if (primary == "焦虑") add("紧张")
+            if (primary in listOf("平静", "专注")) addAll(listOf("平静", "专注"))
         }.distinct().take(4)
         val hypotheses = buildList {
             when (scene) {
@@ -161,7 +181,7 @@ object SignalPreprocessor {
                 "browser_app" -> add("浏览场景下，应用切换和停顿需要结合时间段观察")
                 else -> add("当前场景信息有限，主要参考结构化指标偏离")
             }
-            if (night > 0.5f) add("深夜场景提高疲惫、空落和恢复需求候选权重")
+            if (night > 0.5f || evening > 0.5f) add("夜间或晚间场景提高疲惫、低落、空落和恢复需求候选权重")
             if (sustainedUse) add("连续使用偏长，提高疲惫候选权重")
             if (appSwitchApprox >= 3) add("短时间多场景切换，提高压力或分心候选权重")
         }.take(4)
@@ -169,7 +189,13 @@ object SignalPreprocessor {
             "high" -> 0.78f
             "medium" -> 0.62f
             else -> 0.38f
-        }.let { if (motionInterference == "high") it - 0.18f else it }.coerceIn(0.20f, 0.88f)
+        }.let {
+            when {
+                motionInterference == "high" -> it - 0.18f
+                patternPrimary != null -> it + 0.08f
+                else -> it
+            }
+        }.coerceIn(0.20f, 0.88f)
 
         return CleanedSignalSnapshot(
             sample = cleaned,
@@ -193,10 +219,140 @@ object SignalPreprocessor {
         return ((value - baseline) / baseline).coerceIn(-3f, 3f)
     }
 
-    private fun nightWeight(timestamp: Long): Float {
-        val hour = java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
+    private fun hourOfDay(timestamp: Long): Int =
+        java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
             .get(java.util.Calendar.HOUR_OF_DAY)
-        return if (hour in 0..5 || hour >= 23) 0.75f else 0.10f
+
+    private fun nightWeight(hour: Int): Float =
+        if (hour in 0..5 || hour >= 23) 0.75f else 0.10f
+
+    private fun eveningWeight(hour: Int): Float =
+        if (hour in 18..22) 0.65f else 0.10f
+
+    private fun classifyByFeaturePattern(
+        cleaned: HabitSampleEntity,
+        scene: String,
+        hour: Int,
+        heartLift: Float,
+        breathLift: Float,
+        typingDrop: Float,
+        typingRush: Float,
+        deleteLift: Float,
+        pauseLift: Float,
+        stress: Float,
+        fatigue: Float,
+        arousal: Float,
+        loneliness: Float,
+        motionInterference: String
+    ): String? {
+        val eveningOrNight = hour in 18..23 || hour in 0..5
+        val socialOrChat = scene in listOf("chat_app", "social_app")
+        val taskScene = scene in listOf("productivity_app", "browser_app", "chat_app")
+        val entertainmentScene = scene in listOf("video_app", "game_app", "social_app")
+        return when {
+            motionInterference == "high" || cleaned.motionLevel >= 0.65f -> "运动干扰"
+
+            entertainmentScene &&
+                cleaned.typingSpeed >= 100f &&
+                cleaned.deleteRate <= 0.18f &&
+                cleaned.pauseDuration <= 3.2f &&
+                cleaned.heartRate in 78..112 &&
+                cleaned.breathRate in 15..23 &&
+                cleaned.motionLevel < 0.58f -> "积极活跃"
+
+            cleaned.typingSpeed >= 122f &&
+                cleaned.deleteRate <= 0.18f &&
+                cleaned.pauseDuration <= 3.0f &&
+                cleaned.heartRate in 70..92 &&
+                cleaned.breathRate in 13..19 &&
+                cleaned.motionLevel < 0.30f -> "专注"
+
+            cleaned.heartRate <= 80 &&
+                cleaned.breathRate <= 16 &&
+                cleaned.typingSpeed in 55f..125f &&
+                cleaned.deleteRate <= 0.14f &&
+                cleaned.pauseDuration <= 3.5f &&
+                cleaned.motionLevel < 0.25f -> "平静"
+
+            cleaned.heartRate >= 98 &&
+                (cleaned.breathRate >= 23 || cleaned.heartRate >= 120) &&
+                cleaned.typingSpeed <= 155f &&
+                cleaned.deleteRate >= 0.25f &&
+                (
+                    cleaned.pauseDuration >= 7.0f ||
+                        scene == "unknown" ||
+                        scene == "chat_app" && cleaned.deleteRate >= 0.58f && cleaned.typingSpeed <= 132f ||
+                        cleaned.typingSpeed <= 90f && cleaned.pauseDuration >= 10f
+                    ) &&
+                cleaned.motionLevel < 0.55f -> "焦虑"
+
+            scene == "social_app" &&
+                cleaned.deleteRate >= 0.40f &&
+                cleaned.typingSpeed >= 105f &&
+                cleaned.pauseDuration <= 7.5f &&
+                cleaned.heartRate >= 90 &&
+                cleaned.breathRate >= 19 &&
+                cleaned.motionLevel < 0.50f -> "烦躁"
+
+            scene == "chat_app" &&
+                cleaned.deleteRate >= 0.40f &&
+                (cleaned.typingSpeed >= 180f || cleaned.deleteRate >= 0.50f) &&
+                cleaned.pauseDuration <= 4.8f &&
+                cleaned.heartRate >= 90 &&
+                cleaned.breathRate >= 19 &&
+                cleaned.motionLevel < 0.50f -> "烦躁"
+
+            scene == "browser_app" &&
+                cleaned.deleteRate >= 0.54f &&
+                cleaned.typingSpeed >= 120f &&
+                cleaned.pauseDuration <= 6.5f &&
+                cleaned.heartRate >= 110 &&
+                cleaned.breathRate >= 19 &&
+                cleaned.motionLevel < 0.50f -> "烦躁"
+
+            taskScene &&
+                cleaned.heartRate >= 88 &&
+                cleaned.breathRate >= 19 &&
+                cleaned.deleteRate in 0.22f..0.58f &&
+                cleaned.pauseDuration in 2.4f..9.0f &&
+                cleaned.typingSpeed >= 75f &&
+                cleaned.motionLevel < 0.40f -> "紧张"
+
+            cleaned.typingSpeed <= 82f &&
+                cleaned.pauseDuration >= 8f &&
+                cleaned.heartRate <= 86 &&
+                cleaned.breathRate <= 18 &&
+                cleaned.motionLevel < 0.22f &&
+                (scene in listOf("productivity_app", "browser_app") || scene == "video_app" && cleaned.pauseDuration < 20f) -> "疲惫"
+
+            cleaned.pauseDuration >= 9f &&
+                cleaned.typingSpeed <= 68f &&
+                cleaned.motionLevel <= 0.16f &&
+                scene == "social_app" -> "低落"
+
+            cleaned.pauseDuration >= 13f &&
+                cleaned.typingSpeed <= 68f &&
+                cleaned.motionLevel <= 0.16f &&
+                scene == "chat_app" &&
+                (cleaned.typingSpeed <= 45f || cleaned.pauseDuration >= 15f || cleaned.deleteRate <= 0.12f) -> "低落"
+
+            cleaned.pauseDuration >= 15f &&
+                cleaned.typingSpeed <= 68f &&
+                cleaned.motionLevel <= 0.16f &&
+                scene == "unknown" &&
+                cleaned.deleteRate >= 0.14f -> "低落"
+
+            cleaned.pauseDuration >= 10f &&
+                cleaned.typingSpeed <= 82f &&
+                cleaned.motionLevel <= 0.16f &&
+                (scene == "video_app" || scene == "unknown" || scene == "chat_app") -> "空落"
+
+            fatigue >= 0.58f && loneliness >= 0.55f && eveningOrNight -> "空落"
+            fatigue >= 0.52f && typingDrop >= 0.25f && !eveningOrNight -> "疲惫"
+            arousal >= 0.42f && typingRush >= 0.24f && stress < 0.42f && deleteLift < 0.40f -> "专注"
+            heartLift < 0.18f && breathLift < 0.18f && pauseLift < 0.40f && arousal < 0.32f -> "平静"
+            else -> null
+        }
     }
 
     private fun lowActivity(sample: HabitSampleEntity): Float =

@@ -23,6 +23,10 @@ class RealGuardianAgentApi : GuardianAgentApi {
             If localEmotionGuess contains a closed-set primary label and the structured
             evidence does not strongly contradict it, keep that label and lower/raise
             confidence using observed clues and counter evidence.
+            If localEmotionGuess confidence is 0.70 or higher, treat it as the primary
+            classifier result. Only change primaryEmotion when at least two independent
+            structured signals clearly support another closed-set label. Otherwise keep
+            the local primary label and put ambiguity in secondaryEmotions/uncertainty.
 
             Boundary rules:
             1. If motionLevel is high or cleanedSignalSummary says motion=high, prefer 运动干扰 unless interaction signals are extremely abnormal.
