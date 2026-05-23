@@ -24,8 +24,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.neurogarden.app.data.local.AgentAuditLogEntity
 import com.neurogarden.app.passive.AccessibilitySignalStore
+import com.neurogarden.app.passive.NotificationPolicyStore
+import com.neurogarden.app.passive.PassiveOverlayAlert
 import com.neurogarden.app.passive.PassiveDebugSnapshot
 import com.neurogarden.app.passive.PassiveDebugStore
+import com.neurogarden.app.passive.PendingPassiveAlertStore
 import com.neurogarden.app.passive.WatchSignalStore
 import kotlinx.coroutines.delay
 
@@ -39,6 +42,8 @@ fun DebugLogScreen(
     var accessibility by remember { mutableStateOf(AccessibilitySignalStore.debugSnapshot(context)) }
     var watchSettings by remember { mutableStateOf(WatchSignalStore.readSettings(context)) }
     var watchPacket by remember { mutableStateOf(WatchSignalStore.currentPacket(context)) }
+    var pendingAlert by remember { mutableStateOf(PendingPassiveAlertStore.read(context)) }
+    var notificationStatus by remember { mutableStateOf(NotificationPolicyStore.status(context)) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -46,6 +51,8 @@ fun DebugLogScreen(
             accessibility = AccessibilitySignalStore.debugSnapshot(context)
             watchSettings = WatchSignalStore.readSettings(context)
             watchPacket = WatchSignalStore.currentPacket(context)
+            pendingAlert = PendingPassiveAlertStore.read(context)
+            notificationStatus = NotificationPolicyStore.status(context)
             delay(1000)
         }
     }
@@ -83,6 +90,14 @@ fun DebugLogScreen(
 
         DebugCard("后台综合评估") {
             PassiveDebugText(passive)
+        }
+
+        DebugCard("提醒通道状态") {
+            Text("悬浮窗权限：${if (PassiveOverlayAlert.canShow(context)) "已开启" else "未开启"}")
+            Text("待 App 内弹窗：${pendingAlert?.let { "${it.title} / ${timeText(it.createdAt)}" } ?: "无"}")
+            Text("通知冷却剩余：${notificationStatus.cooldownRemainingMinutes} 分钟")
+            Text("今日通知次数：${notificationStatus.countToday}/${notificationStatus.maxDaily}")
+            Text("通知现在可发送：${if (notificationStatus.canNotifyNow) "是" else "否"}")
         }
 
         DebugCard("Agent 审计日志") {
@@ -129,6 +144,7 @@ private fun PassiveDebugText(snapshot: PassiveDebugSnapshot) {
     Text("motionLevel：${"%.2f".format(snapshot.motionLevel)}")
     Text("physiologyRisk：${"%.2f".format(snapshot.physiologyRisk)}")
     Text("combinedRisk：${"%.2f".format(snapshot.combinedRisk)}")
+    Text("dataQuality：${snapshot.dataQualityLevel}")
     Text("lastAppCategory：${snapshot.lastAppCategory}")
     Text("是否满足弹窗条件：${if (snapshot.alertAllowed) "是" else "否"}")
     Text("原因：${snapshot.lastReason}")

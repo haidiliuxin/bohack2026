@@ -22,6 +22,7 @@ import com.neurogarden.app.algorithm.PersonalizedRiskCalculator
 import com.neurogarden.app.algorithm.RiskLevel
 import com.neurogarden.app.algorithm.TrendAnalyzer
 import com.neurogarden.app.data.local.HabitSampleEntity
+import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.shared.model.SensorPacket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -98,8 +99,10 @@ class PassiveGuardianService : Service() {
         val samples = app.habitRepository.getRecentSamples(30)
         val baseline = app.habitRepository.getLatestBaseline()
             ?: HabitLearningEngine.buildBaseline(samples, now)
-        val thresholds = app.habitRepository.getLatestThresholdProfile()
-            ?: HabitLearningEngine.buildThresholdProfile(baseline, now)
+        val thresholds = (
+            app.habitRepository.getLatestThresholdProfile()
+                ?: HabitLearningEngine.buildThresholdProfile(baseline, now)
+            ).applyCareModePolicy(policy, now)
         val weather = app.weatherRepository.current()
         val todayEvents = app.riskEventRepository.getTodayEvents(now)
         val recentFeedback = app.habitRepository.getRecentFeedbackRecords(12)
@@ -125,6 +128,15 @@ class PassiveGuardianService : Service() {
                 personalityModel = personalityModel,
                 recentActivity = recentActivity
             )
+        )
+        val fallbackUsed = agent.isMockFallback()
+        app.agentAuditLogRepository.record(
+            triggerReason = if (combinedRisk >= 0.35f) "passive_abnormal" else "passive_scheduled",
+            response = agent,
+            httpSuccess = !fallbackUsed,
+            fallbackUsed = fallbackUsed,
+            fallbackReason = agent.reason.takeIf { fallbackUsed },
+            requestTime = now
         )
         val risk = PersonalizedRiskCalculator.calculate(sample, baseline, thresholds, agent, samples)
         val trend = TrendAnalyzer.analyze(samples, now)
@@ -155,6 +167,7 @@ class PassiveGuardianService : Service() {
                 physiologyRisk = physiologyRisk,
                 combinedRisk = combinedRisk,
                 alertAllowed = combinedAlert != null && quality.qualityLevel != "low",
+                dataQualityLevel = quality.qualityLevel,
                 lastAppCategory = appCategory,
                 lastReason = reason
             )
@@ -281,6 +294,30 @@ class PassiveGuardianService : Service() {
                 message = "检测到被照护者出现持续状态偏离，建议照护者进行确认。$detail"
             )
         }
+
+    private fun ThresholdProfileEntity.applyCareModePolicy(
+        policy: com.neurogarden.app.algorithm.CareModePolicy,
+        now: Long
+    ): ThresholdProfileEntity {
+        val thresholdFactor = (1f / policy.riskSensitivity).coerceIn(0.75f, 1.25f)
+        return copy(
+            id = 0,
+            heartRateDeltaWarning = (heartRateDeltaWarning * thresholdFactor).coerceIn(8f, 42f),
+            breathRateWarning = (breathRateWarning * thresholdFactor).coerceIn(12f, 34f),
+            typingSpeedDeltaWarning = (typingSpeedDeltaWarning * thresholdFactor).coerceIn(0.12f, 0.85f),
+            deleteRateWarning = (deleteRateWarning * thresholdFactor).coerceIn(0.04f, 0.70f),
+            pauseDurationWarning = (pauseDurationWarning * thresholdFactor).coerceIn(1f, 14f),
+            guardianNotifyThreshold = policy.notificationThreshold,
+            updatedBy = "care_mode_runtime",
+            updatedReason = "passive_runtime_policy:${policy.mode.name}",
+            updatedAt = now
+        )
+    }
+
+    private fun com.neurogarden.app.agent.AgentSignalResponse.isMockFallback(): Boolean =
+        reason.contains("Mock", ignoreCase = true) ||
+            reason.contains("fallback", ignoreCase = true) ||
+            reason.contains("本地", ignoreCase = true)
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

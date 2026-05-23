@@ -14,6 +14,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -75,9 +79,6 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
         super.onResume()
         runCatching { Wearable.getDataClient(this).addListener(this) }
         PassiveOverlayAlert.dismiss(this)
-        PendingPassiveAlertStore.read(this)?.let { alert ->
-            PendingPassiveAlertStore.consume(this, alert.id)
-        }
     }
 
     override fun onPause() {
@@ -107,6 +108,7 @@ private fun NeuroGardenRoot(
     var guardianSettings by remember { mutableStateOf(GuardianSettings()) }
     var showDebugLog by remember { mutableStateOf(false) }
     var wearConnectionStatus by remember { mutableStateOf("未连接") }
+    var pendingPassiveAlert by remember { mutableStateOf<com.neurogarden.app.passive.PendingPassiveAlert?>(null) }
     val realtime by mainViewModel.uiState.collectAsStateWithLifecycle()
     val todayRiskEvents by mainViewModel.todayRiskEvents.collectAsState(initial = emptyList())
     val recentRiskEvents by mainViewModel.recentRiskEvents.collectAsState(initial = emptyList())
@@ -131,6 +133,13 @@ private fun NeuroGardenRoot(
                 simulatedMotionLevel = guardianSettings.simulatedMotionLevel
             )
         )
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            pendingPassiveAlert = PendingPassiveAlertStore.read(context.applicationContext)
+            kotlinx.coroutines.delay(1000L)
+        }
     }
 
     BackHandler(enabled = showDebugLog) {
@@ -224,6 +233,38 @@ private fun NeuroGardenRoot(
                 onDebugLog = { showDebugLog = true }
             )
         }
+    }
+
+    pendingPassiveAlert?.let { alert ->
+        AlertDialog(
+            onDismissRequest = {
+                PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
+                pendingPassiveAlert = null
+            },
+            title = { Text(alert.title) },
+            text = { Text(alert.message) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
+                        pendingPassiveAlert = null
+                        mainViewModel.beginSupportConversation()
+                    }
+                ) {
+                    Text("进入陪伴")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
+                        pendingPassiveAlert = null
+                    }
+                ) {
+                    Text("知道了")
+                }
+            }
+        )
     }
 
 }
