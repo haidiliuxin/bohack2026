@@ -37,6 +37,7 @@ import com.neurogarden.app.data.local.SensorRecordEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.app.data.local.UserHabitBaselineEntity
 import com.neurogarden.app.data.datastore.CareModeStore
+import com.neurogarden.app.data.repository.AgentAuditLogRepository
 import com.neurogarden.app.data.repository.HabitRepository
 import com.neurogarden.app.data.repository.RiskEventRepository
 import com.neurogarden.app.data.repository.TherapyRepository
@@ -89,6 +90,7 @@ data class RealtimeUiState(
         "OpenAI compatible"
     },
     val guardianRuntimeStatus: GuardianRuntimeStatus = GuardianRuntimeStatus(),
+    val integrationDemoAlert: String? = null,
     val supportMessages: List<SupportMessage> = emptyList()
 )
 
@@ -122,12 +124,14 @@ class MainViewModel(
     private val therapyRepository: TherapyRepository,
     private val weatherRepository: WeatherRepository,
     private val careModeStore: CareModeStore,
+    private val agentAuditLogRepository: AgentAuditLogRepository,
     private val guardianAgentApi: GuardianAgentApi
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(RealtimeUiState())
     val uiState: StateFlow<RealtimeUiState> = _uiState.asStateFlow()
     val todayRiskEvents = riskEventRepository.observeTodayEvents()
     val recentRiskEvents = riskEventRepository.observeRecent7DayEvents()
+    val agentAuditLogs = agentAuditLogRepository.recentLogs
     val careMode: StateFlow<CareMode> = careModeStore.currentMode.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -297,19 +301,25 @@ class MainViewModel(
             if (latestThresholds == null || baseThresholds == learnedThresholds) {
                 habitRepository.saveThresholdProfile(baseThresholds)
             }
-            val agentResponse = guardianAgentApi.analyzeSignals(
-                AgentSignalRequest(
-                    userId = "local-demo-user",
-                    recentSignals = samples.take(12).map { it.toDto() },
-                    currentBaseline = baseline.toDto(),
-                    currentThresholds = thresholds.toDto(),
-                    latestRiskScore = result.stressScore,
-                    latestRiskLevel = result.state.name.lowercase(),
-                    userFeedback = sample.userFeedback,
-                    userEmotionLabel = _uiState.value.lastUserEmotionLabel,
-                    weather = weather.eventLabel(),
-                    timeSegment = now.timeSegment()
-                )
+            val agentRequest = AgentSignalRequest(
+                userId = "local-demo-user",
+                recentSignals = samples.take(12).map { it.toDto() },
+                currentBaseline = baseline.toDto(),
+                currentThresholds = thresholds.toDto(),
+                latestRiskScore = result.stressScore,
+                latestRiskLevel = result.state.name.lowercase(),
+                userFeedback = sample.userFeedback,
+                userEmotionLabel = _uiState.value.lastUserEmotionLabel,
+                weather = weather.eventLabel(),
+                timeSegment = now.timeSegment()
+            )
+            val agentResponse = guardianAgentApi.analyzeSignals(agentRequest)
+            agentAuditLogRepository.record(
+                triggerReason = if (result.stressScore >= 0.35f) "abnormal" else "scheduled",
+                response = agentResponse,
+                httpSuccess = !agentResponse.isMockFallback(),
+                fallbackUsed = agentResponse.isMockFallback(),
+                fallbackReason = agentResponse.reason.takeIf { agentResponse.isMockFallback() }
             )
             val latestQuality = DataQualityEvaluator.evaluate(
                 habitSamples = samples.filter { it.timestamp >= now.startOfDay() },
@@ -587,6 +597,10 @@ class MainViewModel(
                 seedAcceptanceWeek(todayStart)
                 return@launch
             }
+            if (mode == "integration_demo") {
+                runIntegrationDemo(now)
+                return@launch
+            }
             val profile = habitRepository.getLatestThresholdProfile()
                 ?: HabitLearningEngine.defaultThresholdProfile(now)
             val samples = demoSamples(mode, todayStart)
@@ -750,6 +764,112 @@ class MainViewModel(
             updatedAt = now
         )
 
+    fun dismissIntegrationDemoAlert() {
+        _uiState.value = _uiState.value.copy(integrationDemoAlert = null)
+    }
+
+    private suspend fun runIntegrationDemo(now: Long) {
+        val sample = HabitSampleEntity(
+            timestamp = now,
+            heartRate = 110,
+            breathRate = 25,
+            motionLevel = 0.08f,
+            typingSpeed = 52f,
+            deleteRate = 0.28f,
+            pauseDuration = 6.5f,
+            userFeedback = null,
+            contextTag = "integration_demo",
+            riskLevel = "observe",
+            createdAt = now
+        )
+        habitRepository.saveSample(sample)
+        therapyRepository.saveSensorRecord(
+            SensorRecordEntity(
+                timestamp = now,
+                heartRate = sample.heartRate,
+                breathRate = sample.breathRate,
+                motionLevel = sample.motionLevel,
+                stressScore = 0.82f,
+                confidence = 0.84f,
+                state = "needs_confirmation"
+            )
+        )
+        val samples = habitRepository.getSamplesSince(HabitLearningEngine.windowStart(now, HabitLearningWindow.THIRTY_DAYS))
+        val baseline = HabitLearningEngine.buildBaseline(samples, now)
+        val thresholds = (habitRepository.getLatestThresholdProfile() ?: HabitLearningEngine.defaultThresholdProfile(now))
+            .applyCareModePolicy(careModePolicy.value, now)
+        habitRepository.saveBaseline(baseline)
+        val request = AgentSignalRequest(
+            userId = "local-demo-user",
+            recentSignals = samples.take(12).map { it.toDto() },
+            currentBaseline = baseline.toDto(),
+            currentThresholds = thresholds.toDto(),
+            latestRiskScore = 0.82f,
+            latestRiskLevel = "guardian_check",
+            userFeedback = null,
+            weather = weatherRepository.current().eventLabel(),
+            timeSegment = now.timeSegment()
+        )
+        val response = runCatching { guardianAgentApi.analyzeSignals(request) }
+            .getOrElse {
+                AgentSignalResponse(
+                    riskScore = 0.82f,
+                    riskLevel = "guardian_check",
+                    emotionalState = "needs_confirmation",
+                    suggestedAction = "建议确认当前状态并查看异常详情。",
+                    careMessage = "检测到节律波动，请查看结构化指标。",
+                    shouldNotifyGuardian = true,
+                    thresholdAdjustments = emptyMap(),
+                    confidence = 0.72f,
+                    reason = "integration_demo_local_fallback:${it.message}",
+                    mainReasons = listOf("心率和呼吸偏离", "输入节奏异常", "停顿时长增加"),
+                    metricDeviationPercent = emptyMap()
+                )
+            }
+        val fallbackUsed = response.isMockFallback() || response.reason.contains("fallback", ignoreCase = true)
+        agentAuditLogRepository.record(
+            triggerReason = "demo",
+            response = response,
+            httpSuccess = !fallbackUsed,
+            fallbackUsed = fallbackUsed,
+            fallbackReason = response.reason.takeIf { fallbackUsed },
+            requestTime = now
+        )
+        val event = RiskEventEntity(
+            startTime = now,
+            endTime = now + 5L * 60L * 1000L,
+            riskScore = response.riskScore ?: 0.82f,
+            riskLevel = response.riskLevel,
+            confidence = response.confidence,
+            mainReasons = response.mainReasons.take(3).ifEmpty {
+                listOf("心率和呼吸偏离", "输入节奏异常", "停顿时长增加")
+            }.joinToString("|"),
+            metricDeviationPercent = "heartRate=52.8;breathRate=108.3;typingSpeed=-48.0;deleteRate=460.0;pauseDuration=333.0",
+            heartRateDeviationPercent = 52.8f,
+            breathRateDeviationPercent = 108.3f,
+            typingSpeedDeviationPercent = -48f,
+            deleteRateDeviationPercent = 460f,
+            pauseDurationDeviationPercent = 333f,
+            motionLevel = sample.motionLevel,
+            weather = request.weather ?: "unknown",
+            timeSegment = request.timeSegment ?: "unknown",
+            agentAnalysis = "trigger=demo;state=${response.emotionalState ?: response.riskLevel};reason=${response.reason.take(80)}",
+            suggestedAction = response.suggestedAction,
+            guardianNotified = response.shouldNotifyGuardian,
+            guardianFeedback = null,
+            isFalseAlarm = false,
+            createdAt = System.currentTimeMillis()
+        )
+        riskEventRepository.insertEvent(event)
+        _uiState.value = _uiState.value.copy(
+            integrationDemoAlert = "联调演示已完成：已写入异常样本、请求 Agent、生成风险事件并刷新今日摘要。",
+            guardianRuntimeStatus = _uiState.value.guardianRuntimeStatus.copy(
+                lastAgentStatus = response.emotionalState ?: response.riskLevel,
+                lastAgentReason = response.mainReasons.take(3).joinToString("；").ifBlank { response.reason }
+            )
+        )
+    }
+
     private data class InteractionFeatures(
         val typingSpeed: Float,
         val deleteRate: Float,
@@ -790,6 +910,11 @@ class MainViewModel(
             copy(guardianTriggerReason = null)
         }
     }
+
+    private fun AgentSignalResponse.isMockFallback(): Boolean =
+        reason.contains("Mock", ignoreCase = true) ||
+            reason.contains("fallback", ignoreCase = true) ||
+            reason.contains("本地", ignoreCase = true)
 
     private fun buildDailySummary(
         dayStart: Long,
@@ -1176,11 +1301,20 @@ class MainViewModel(
         private val therapyRepository: TherapyRepository,
         private val weatherRepository: WeatherRepository,
         private val careModeStore: CareModeStore,
+        private val agentAuditLogRepository: AgentAuditLogRepository,
         private val guardianAgentApi: GuardianAgentApi
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            MainViewModel(habitRepository, riskEventRepository, therapyRepository, weatherRepository, careModeStore, guardianAgentApi) as T
+            MainViewModel(
+                habitRepository,
+                riskEventRepository,
+                therapyRepository,
+                weatherRepository,
+                careModeStore,
+                agentAuditLogRepository,
+                guardianAgentApi
+            ) as T
     }
 
     private companion object {

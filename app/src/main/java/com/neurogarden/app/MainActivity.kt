@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
             (application as NeuroGardenApp).repository,
             (application as NeuroGardenApp).weatherRepository,
             (application as NeuroGardenApp).careModeStore,
+            (application as NeuroGardenApp).agentAuditLogRepository,
             (application as NeuroGardenApp).guardianAgentApi
         )
     }
@@ -107,6 +108,7 @@ private fun NeuroGardenRoot(
     val sevenDaySummaries by mainViewModel.sevenDaySummaries.collectAsState()
     val careMode by mainViewModel.careMode.collectAsState()
     val careModePolicy by mainViewModel.careModePolicy.collectAsState()
+    val agentAuditLogs by mainViewModel.agentAuditLogs.collectAsState(initial = emptyList())
     val sessions by therapyViewModel.sessions.collectAsState(initial = emptyList())
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -134,7 +136,10 @@ private fun NeuroGardenRoot(
             .background(MaterialTheme.colorScheme.background)
     ) {
         if (showDebugLog) {
-            DebugLogScreen(onBack = { showDebugLog = false })
+            DebugLogScreen(
+                logs = agentAuditLogs,
+                onBack = { showDebugLog = false }
+            )
         } else {
             MainDashboardScreen(
                 realtime = realtime,
@@ -198,6 +203,7 @@ private fun NeuroGardenRoot(
                 onClearHabitMemory = mainViewModel::clearHabitMemory,
                 onSeedDemoMode = mainViewModel::seedDemoMode,
                 onCareModeChange = mainViewModel::setCareMode,
+                onDismissIntegrationDemoAlert = mainViewModel::dismissIntegrationDemoAlert,
                 onDebugLog = { showDebugLog = true }
             )
         }

@@ -6,6 +6,7 @@ import com.neurogarden.app.agent.MockGuardianAgentApi
 import com.neurogarden.app.agent.RealGuardianAgentApi
 import com.neurogarden.app.data.datastore.CareModeStore
 import com.neurogarden.app.data.local.NeuroGardenDatabase
+import com.neurogarden.app.data.repository.AgentAuditLogRepository
 import com.neurogarden.app.data.repository.HabitRepository
 import com.neurogarden.app.data.repository.RiskEventRepository
 import com.neurogarden.app.data.repository.TherapyRepository
@@ -16,6 +17,7 @@ class NeuroGardenApp : Application() {
     val repository by lazy { TherapyRepository(database.therapyDao()) }
     val habitRepository by lazy { HabitRepository(database.habitDao()) }
     val riskEventRepository by lazy { RiskEventRepository(database.riskEventDao()) }
+    val agentAuditLogRepository by lazy { AgentAuditLogRepository(database.agentAuditLogDao()) }
     val weatherRepository by lazy { WeatherRepository(this) }
     val careModeStore by lazy { CareModeStore(this) }
     val guardianAgentApi by lazy { GuardianAgentFallback(RealGuardianAgentApi(), MockGuardianAgentApi()) }

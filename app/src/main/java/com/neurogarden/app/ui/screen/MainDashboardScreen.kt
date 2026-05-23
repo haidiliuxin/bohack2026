@@ -88,6 +88,7 @@ fun MainDashboardScreen(
     onClearHabitMemory: () -> Unit,
     onSeedDemoMode: (String) -> Unit,
     onCareModeChange: (CareMode) -> Unit,
+    onDismissIntegrationDemoAlert: () -> Unit,
     onDebugLog: () -> Unit
 ) {
     var tab by remember { mutableStateOf(MainTab.TODAY) }
@@ -218,6 +219,18 @@ fun MainDashboardScreen(
                 dismissedAlertEventId = event.id
                 dismissedAlertAt = System.currentTimeMillis()
                 onFeedback("我需要陪伴")
+            }
+        )
+    }
+    realtime.integrationDemoAlert?.let { message ->
+        AlertDialog(
+            onDismissRequest = onDismissIntegrationDemoAlert,
+            title = { Text("联调演示提醒") },
+            text = { Text(message) },
+            confirmButton = {
+                Button(onClick = onDismissIntegrationDemoAlert) {
+                    Text("知道了")
+                }
             }
         )
     }
@@ -745,6 +758,9 @@ private fun SettingsDashboardScreen(
             }
         }
         DemoModeCard(onSeedDemoMode)
+        Button(onClick = { onSeedDemoMode("integration_demo") }, modifier = Modifier.fillMaxWidth()) {
+            Text("启动联调演示")
+        }
         OutlinedButton(onClick = onDebugLog, modifier = Modifier.fillMaxWidth()) { Text("查看采集 Debug") }
         OutlinedButton(onClick = onClearHabitMemory, modifier = Modifier.fillMaxWidth()) { Text("清除本地习惯记忆和风险事件") }
     }

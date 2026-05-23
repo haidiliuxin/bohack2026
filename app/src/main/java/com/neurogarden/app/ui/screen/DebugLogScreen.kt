@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.neurogarden.app.data.local.AgentAuditLogEntity
 import com.neurogarden.app.passive.AccessibilitySignalStore
 import com.neurogarden.app.passive.PassiveDebugSnapshot
 import com.neurogarden.app.passive.PassiveDebugStore
@@ -29,7 +30,10 @@ import com.neurogarden.app.passive.WatchSignalStore
 import kotlinx.coroutines.delay
 
 @Composable
-fun DebugLogScreen(onBack: () -> Unit) {
+fun DebugLogScreen(
+    logs: List<AgentAuditLogEntity>,
+    onBack: () -> Unit
+) {
     val context = LocalContext.current
     var passive by remember { mutableStateOf(PassiveDebugStore.read(context)) }
     var accessibility by remember { mutableStateOf(AccessibilitySignalStore.debugSnapshot(context)) }
@@ -55,7 +59,7 @@ fun DebugLogScreen(onBack: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("采集日志", style = MaterialTheme.typography.headlineMedium)
-        Text("这个页面每秒刷新，用来确认无障碍输入、模拟手表数据和后台综合判断是否闭环。")
+        Text("这个页面每秒刷新，用来确认输入节奏、手表/模拟手表、后台判断和 Agent 请求日志是否闭环。")
 
         DebugCard("无障碍输入事件") {
             Text("当前窗口 typedCount：${accessibility.typedCount}")
@@ -78,6 +82,22 @@ fun DebugLogScreen(onBack: () -> Unit) {
 
         DebugCard("后台综合评估") {
             PassiveDebugText(passive)
+        }
+
+        DebugCard("Agent 审计日志") {
+            if (logs.isEmpty()) {
+                Text("暂无后端请求记录。启动联调演示或等待后台检测后会显示在这里。")
+            } else {
+                logs.take(8).forEach { log ->
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("时间：${timeText(log.requestTime)} / 触发：${log.triggerReason}")
+                        Text("HTTP：${if (log.httpSuccess) "成功" else "失败或兜底"} / 状态：${log.responseEmotion}")
+                        Text("评分：${"%.2f".format(log.riskScore)} / 等级：${log.riskLevel} / 置信度：${"%.2f".format(log.confidence)}")
+                        Text("原因：${log.mainReasons.ifBlank { "无" }}")
+                        Text("fallback：${if (log.fallbackUsed) log.fallbackReason ?: "已使用" else "否"} / cache：${if (log.cacheUsed) "是" else "否"}")
+                    }
+                }
+            }
         }
 
         OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
