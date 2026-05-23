@@ -135,7 +135,10 @@ class RiskEventRepository(private val dao: RiskEventDao) {
     ): String {
         val reasonText = reasons.joinToString(";")
         val agentReason = agentResponse?.reason?.takeIf { it.isNotBlank() } ?: "local_rule"
-        return "riskLevel=${risk.riskLevel.name.lowercase()};confidence=${"%.2f".format(risk.confidence)};source=$agentReason;reasons=$reasonText"
+        val emotion = agentResponse?.primaryEmotion ?: agentResponse?.emotionalState ?: "unknown"
+        val secondary = agentResponse?.secondaryEmotions.orEmpty().joinToString(",")
+        val uncertainty = agentResponse?.uncertainty.orEmpty().take(80)
+        return "riskLevel=${risk.riskLevel.name.lowercase()};emotion=$emotion;secondary=$secondary;confidence=${"%.2f".format(risk.confidence)};source=$agentReason;uncertainty=$uncertainty;reasons=$reasonText"
     }
 
     private fun hasSimilarReasons(left: String, right: String): Boolean {

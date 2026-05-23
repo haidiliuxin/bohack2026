@@ -27,6 +27,7 @@ import com.neurogarden.app.algorithm.HabitLearningWindow
 import com.neurogarden.app.algorithm.PersonalizedRiskCalculator
 import com.neurogarden.app.algorithm.PersonalizedRiskResult
 import com.neurogarden.app.algorithm.RiskLevel
+import com.neurogarden.app.algorithm.SignalPreprocessor
 import com.neurogarden.app.algorithm.StressCalculator
 import com.neurogarden.app.algorithm.TrendAnalyzer
 import com.neurogarden.app.algorithm.TrendAssessment
@@ -313,6 +314,11 @@ class MainViewModel(
             if (latestThresholds == null || baseThresholds == learnedThresholds) {
                 habitRepository.saveThresholdProfile(baseThresholds)
             }
+            val cleaned = SignalPreprocessor.preprocess(sample, baseline, thresholds, samples)
+            val cleanSample = cleaned.sample
+            val requestSamples = (listOf(cleanSample) + samples.filter { it.timestamp != sample.timestamp })
+                .sortedByDescending { it.timestamp }
+                .take(12)
             val todayEvents = riskEventRepository.getTodayEvents(now)
             val recentFeedback = habitRepository.getRecentFeedbackRecords(12)
             val conversationSummaries = habitRepository.getRecentConversationSummaries(6)
@@ -325,7 +331,7 @@ class MainViewModel(
             )
             val agentRequest = AgentSignalRequest(
                 userId = "local-demo-user",
-                recentSignals = samples.take(12).map { it.toDto() },
+                recentSignals = requestSamples.map { it.toDto() },
                 currentBaseline = baseline.toDto(),
                 currentThresholds = thresholds.toDto(),
                 latestRiskScore = result.stressScore,
@@ -335,7 +341,12 @@ class MainViewModel(
                 weather = weather.eventLabel(),
                 timeSegment = now.timeSegment(),
                 personalityModel = personalityModel,
-                recentActivity = recentActivity
+                recentActivity = recentActivity,
+                cleanedSignalSummary = cleaned.requestSummary(),
+                baselineDeviationPercent = cleaned.deviations,
+                dataQuality = cleaned.qualityLevel,
+                dataLimits = cleaned.dataLimits,
+                localEmotionGuess = cleaned.localEmotionSummary()
             )
             val agentStartedAt = System.currentTimeMillis()
             val agentResponse = guardianAgentApi.analyzeSignals(agentRequest)
@@ -356,7 +367,7 @@ class MainViewModel(
                 baseline = baseline
             )
             val personalizedRisk = PersonalizedRiskCalculator.calculate(
-                sample = sample,
+                sample = cleanSample,
                 baseline = baseline,
                 thresholds = thresholds,
                 agentResponse = agentResponse,
@@ -365,13 +376,13 @@ class MainViewModel(
             val todayGuardianAlerts = todayEvents.count { it.guardianNotified }
             val modeAdjustedRisk = personalizedRisk.applyCareModeNotificationPolicy(policy, todayGuardianAlerts)
             riskEventRepository.recordIfNeeded(
-                sample = sample,
+                sample = cleanSample,
                 baseline = baseline,
                 risk = modeAdjustedRisk,
                 agentResponse = agentResponse,
                 weather = _uiState.value.weather.eventLabel()
             )
-            val localEmotion = EmotionalStateEstimator.estimate(sample, baseline, thresholds)
+            val localEmotion = EmotionalStateEstimator.estimate(cleanSample, baseline, thresholds)
             val emotionalState = EmotionCalibrationEngine.calibrate(
                 estimate = localEmotion.applyAgentEmotion(agentResponse),
                 recentFeedback = habitRepository.getRecentFeedbackRecords(12)
@@ -1033,7 +1044,12 @@ class MainViewModel(
             fatigueScore = agent.fatigueScore?.coerceIn(0f, 1f) ?: fatigueScore,
             lonelinessScore = agent.lonelinessScore?.coerceIn(0f, 1f) ?: lonelinessScore,
             stressScore = agent.stressScore?.coerceIn(0f, 1f) ?: stressScore,
-            explanation = "模型综合结构化数据判断为“${agent.emotionalState}”。${agent.reason}"
+            explanation = "模型综合结构化数据判断为“${agent.primaryEmotion ?: agent.emotionalState}”。${agent.reason}",
+            secondaryStates = agent.secondaryEmotions,
+            observedClues = agent.observedClues.ifEmpty { agent.mainReasons },
+            counterEvidence = agent.counterEvidence,
+            uncertainty = agent.uncertainty,
+            emotionFamilyOverride = agent.emotionFamily
         )
     }
 

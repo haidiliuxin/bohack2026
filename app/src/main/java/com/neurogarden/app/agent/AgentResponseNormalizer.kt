@@ -1,5 +1,6 @@
 package com.neurogarden.app.agent
 
+import com.neurogarden.app.algorithm.EmotionLabelNormalizer
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.max
@@ -28,11 +29,35 @@ object AgentResponseNormalizer {
             .ifEmpty { listOf("结构化特征触发本地安全兜底") }
             .map { sanitizeShortText(it).take(60) }
             .take(3)
+        val primaryEmotion = EmotionLabelNormalizer.normalize(
+            json.optString("primaryEmotion").ifBlank {
+                json.optString("emotionalState").ifBlank { emotionalLabelFor(json, normalizedState) }
+            }
+        )
+        val secondary = EmotionLabelNormalizer.normalizeMany(
+            json.optJSONArray("secondaryEmotions").toStringList()
+                .ifEmpty { json.optJSONArray("emotionCandidates").toStringList() }
+        ).filterNot { it == primaryEmotion.primary }.take(4)
+        val observedClues = json.optJSONArray("observedClues").toStringList()
+            .ifEmpty { reasons }
+            .map { sanitizeShortText(it).take(70) }
+            .take(4)
+        val counterEvidence = json.optJSONArray("counterEvidence").toStringList()
+            .map { sanitizeShortText(it).take(70) }
+            .take(4)
 
         return AgentSignalResponse(
             riskScore = riskScore100 / 100f,
             riskLevel = normalizedState.toLegacyRiskLevel(fallbackRiskLevel),
-            emotionalState = emotionalLabelFor(json, normalizedState),
+            emotionalState = primaryEmotion.primary,
+            primaryEmotion = primaryEmotion.primary,
+            secondaryEmotions = secondary,
+            emotionFamily = json.optString("emotionFamily").ifBlank { primaryEmotion.family },
+            arousalScore = json.optNullableFloat("arousal") ?: json.optNullableFloat("arousalScore") ?: primaryEmotion.arousal,
+            valenceScore = json.optNullableFloat("valence") ?: json.optNullableFloat("valenceScore") ?: primaryEmotion.valence,
+            fatigueScore = json.optNullableFloat("fatigue") ?: json.optNullableFloat("fatigueScore") ?: primaryEmotion.fatigue,
+            lonelinessScore = json.optNullableFloat("loneliness") ?: json.optNullableFloat("lonelinessScore") ?: primaryEmotion.loneliness,
+            stressScore = json.optNullableFloat("stress") ?: json.optNullableFloat("stressScore") ?: primaryEmotion.stress,
             suggestedAction = sanitizeShortText(
                 json.optString("suggestedAction", "建议查看状态偏离详情并继续观察。")
             ),
@@ -44,7 +69,14 @@ object AgentResponseNormalizer {
             confidence = confidence,
             reason = json.optString("reason", "normalized_agent_response").take(80),
             mainReasons = reasons,
-            metricDeviationPercent = json.optJSONObject("metricDeviationPercent").toFloatMap()
+            metricDeviationPercent = json.optJSONObject("metricDeviationPercent").toFloatMap(),
+            observedClues = observedClues,
+            counterEvidence = counterEvidence,
+            uncertainty = sanitizeShortText(
+                json.optString("uncertainty", "只能根据授权结构化特征判断状态偏离，不能确认具体原因。")
+            ).take(120),
+            supportStyle = sanitizeShortText(json.optString("supportStyle", "gentle_short")).take(40),
+            thresholdAdvice = sanitizeShortText(json.optString("thresholdAdvice", "本轮不直接修改阈值，仅记录建议。")).take(120)
         )
     }
 
@@ -126,6 +158,9 @@ object AgentResponseNormalizer {
             max(-999f, min(999f, optDouble(key, 0.0).toFloat()))
         }
     }
+
+    private fun JSONObject.optNullableFloat(key: String): Float? =
+        if (has(key) && !isNull(key)) optDouble(key).toFloat().coerceIn(-1f, 1f) else null
 
     private fun sanitizeShortText(value: String): String {
         val diagnosisWords = listOf("焦虑症", "抑郁症", "自残", "自杀", "诊断", "临床", "治疗")

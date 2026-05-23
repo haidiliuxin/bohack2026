@@ -12,12 +12,47 @@ class MockGuardianAgentApi : GuardianAgentApi {
         }
         return AgentSignalResponse(
             riskLevel = riskLevel,
+            emotionalState = mockEmotionFor(request),
+            primaryEmotion = mockEmotionFor(request),
+            secondaryEmotions = mockSecondaryFor(request),
+            emotionFamily = mockFamilyFor(request),
+            arousalScore = when {
+                request.latestRiskScore >= 0.55f -> 0.72f
+                request.latestRiskScore >= 0.35f -> 0.48f
+                else -> 0.22f
+            },
+            valenceScore = when {
+                request.latestRiskScore >= 0.55f -> -0.42f
+                request.latestRiskScore >= 0.35f -> -0.10f
+                else -> 0.48f
+            },
+            fatigueScore = if (request.localEmotionGuess?.contains("疲惫") == true) 0.68f else 0.28f,
+            lonelinessScore = if (request.localEmotionGuess?.contains("空落") == true) 0.58f else 0.16f,
+            stressScore = request.latestRiskScore.coerceIn(0f, 1f),
             suggestedAction = actionFor(riskLevel),
             careMessage = messageFor(riskLevel),
             shouldNotifyGuardian = shouldNotify,
             thresholdAdjustments = thresholdAdjustmentsFor(request),
             confidence = if (request.currentBaseline.confidenceLevel == "high") 0.86f else 0.68f,
-            reason = "Mock Agent 基于近期特征、个人基线和当前阈值给出本地建议"
+            reason = "Mock Agent 基于近期特征、个人基线和当前阈值给出本地建议",
+            mainReasons = request.localEmotionGuess
+                ?.substringAfter("clues=", "")
+                ?.split("|")
+                ?.filter { it.isNotBlank() }
+                ?.take(3)
+                ?: listOf("结构化特征与个人基线存在偏离"),
+            metricDeviationPercent = request.baselineDeviationPercent,
+            observedClues = request.localEmotionGuess
+                ?.substringAfter("clues=", "")
+                ?.substringBefore(";limits=", "")
+                ?.split("|")
+                ?.filter { it.isNotBlank() }
+                ?.take(4)
+                ?: listOf("结构化特征触发本地兜底"),
+            counterEvidence = request.dataLimits.take(3).ifEmpty { listOf("缺少 HRV 和睡眠等长期恢复指标") },
+            uncertainty = "这是基于授权结构化数据的状态估计，不能确认具体原因。",
+            supportStyle = if (request.latestRiskScore >= 0.55f) "grounding" else "observe",
+            thresholdAdvice = "仅建议本地规则参考反馈趋势，Mock 不直接调整阈值。"
         )
     }
 
@@ -85,6 +120,35 @@ class MockGuardianAgentApi : GuardianAgentApi {
         "support" -> "你可能正在承受一些压力。把注意力放到下一次呼气上，我会陪你把节奏放慢。"
         "observe" -> "检测到轻微状态偏离。可以停十秒，看看肩膀和呼吸有没有变紧。"
         else -> "当前状态较稳定，继续保持舒服的节奏。"
+    }
+
+    private fun mockEmotionFor(request: AgentSignalRequest): String =
+        request.localEmotionGuess
+            ?.substringAfter("primary=", "")
+            ?.substringBefore(";")
+            ?.takeIf { it.isNotBlank() }
+            ?: when {
+                request.latestRiskScore >= 0.72f -> "烦躁"
+                request.latestRiskScore >= 0.55f -> "紧张"
+                request.latestRiskScore >= 0.35f -> "压力偏高"
+                else -> "平静"
+            }
+
+    private fun mockSecondaryFor(request: AgentSignalRequest): List<String> =
+        request.localEmotionGuess
+            ?.substringAfter("candidates=", "")
+            ?.substringBefore(";confidence=", "")
+            ?.split("|")
+            ?.filter { it.isNotBlank() && it != mockEmotionFor(request) }
+            ?.take(3)
+            ?: emptyList()
+
+    private fun mockFamilyFor(request: AgentSignalRequest): String = when (mockEmotionFor(request)) {
+        "烦躁", "紧张", "压力偏高" -> "高唤醒负向"
+        "疲惫", "低落", "孤独", "空落" -> "低唤醒负向"
+        "积极活跃" -> "高唤醒正向"
+        "平静", "轻松" -> "低唤醒正向"
+        else -> "证据不足"
     }
 
     private fun gentleQuestionFor(riskLevel: String, request: SupportConversationRequest): String {

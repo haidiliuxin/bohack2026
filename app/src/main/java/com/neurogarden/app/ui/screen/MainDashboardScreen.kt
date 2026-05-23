@@ -473,7 +473,17 @@ private fun EmotionalStateCard(realtime: RealtimeUiState) {
             Text("当前识别的情绪状态", style = MaterialTheme.typography.titleMedium)
             Text("当前识别：${emotion.primaryState}", style = MaterialTheme.typography.titleLarge)
             Text("情绪族群：${emotion.emotionFamilyLabel()} / 置信度 ${"%.0f".format(emotion.confidence * 100)}%")
+            if (emotion.secondaryStates.isNotEmpty()) {
+                Text("可能同时伴随：${emotion.secondaryStates.joinToString("、")}")
+            }
             Text(emotion.explanation)
+            if (emotion.observedClues.isNotEmpty()) {
+                Text("主要证据：${emotion.observedClues.take(3).joinToString("、")}")
+            }
+            if (emotion.counterEvidence.isNotEmpty()) {
+                Text("反证/限制：${emotion.counterEvidence.take(2).joinToString("、")}")
+            }
+            emotion.uncertainty?.let { Text("不确定性：$it") }
             emotion.interferenceReason?.let { Text(it) }
             Text(
                 "心情倾向 ${emotion.valenceScore.toValenceText()} · 唤醒 ${emotion.arousalScore.toPercentText()} · 压力 ${emotion.stressScore.toPercentText()} · " +
@@ -1130,7 +1140,11 @@ private fun Float.toValenceText(): String {
 }
 
 private fun com.neurogarden.app.algorithm.EmotionalStateEstimate.emotionFamilyLabel(): String =
-    when (primaryState) {
+    emotionFamilyOverride ?: when (primaryState) {
+        "平静", "专注", "轻松" -> "正向或中性状态"
+        "积极活跃" -> "高唤醒正向状态"
+        "紧张", "烦躁", "压力偏高" -> "高唤醒压力状态"
+        "疲惫", "低落", "孤独", "空落" -> "低能量或陪伴需求"
         "平静专注", "轻松平稳", "积极活跃", "安静恢复", "相对稳定" -> "正向或中性状态"
         "轻微压力偏离", "高压紧张", "焦虑紧绷" -> "高唤醒压力状态"
         "疲惫恢复慢", "低落疲惫", "可能需要陪伴" -> "低能量或陪伴需求"

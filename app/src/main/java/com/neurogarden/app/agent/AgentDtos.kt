@@ -50,13 +50,21 @@ data class AgentSignalRequest(
     val weather: String? = null,
     val timeSegment: String? = null,
     val personalityModel: String? = null,
-    val recentActivity: String? = null
+    val recentActivity: String? = null,
+    val cleanedSignalSummary: String? = null,
+    val baselineDeviationPercent: Map<String, Float> = emptyMap(),
+    val dataQuality: String? = null,
+    val dataLimits: List<String> = emptyList(),
+    val localEmotionGuess: String? = null
 )
 
 data class AgentSignalResponse(
     val riskScore: Float? = null,
     val riskLevel: String,
     val emotionalState: String? = null,
+    val primaryEmotion: String? = null,
+    val secondaryEmotions: List<String> = emptyList(),
+    val emotionFamily: String? = null,
     val arousalScore: Float? = null,
     val valenceScore: Float? = null,
     val fatigueScore: Float? = null,
@@ -69,7 +77,12 @@ data class AgentSignalResponse(
     val confidence: Float,
     val reason: String,
     val mainReasons: List<String> = emptyList(),
-    val metricDeviationPercent: Map<String, Float> = emptyMap()
+    val metricDeviationPercent: Map<String, Float> = emptyMap(),
+    val observedClues: List<String> = emptyList(),
+    val counterEvidence: List<String> = emptyList(),
+    val uncertainty: String? = null,
+    val supportStyle: String? = null,
+    val thresholdAdvice: String? = null
 )
 
 data class ThresholdTuningRequest(

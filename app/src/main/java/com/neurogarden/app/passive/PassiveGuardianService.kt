@@ -20,6 +20,7 @@ import com.neurogarden.app.algorithm.DataQualityEvaluator
 import com.neurogarden.app.algorithm.HabitLearningEngine
 import com.neurogarden.app.algorithm.PersonalizedRiskCalculator
 import com.neurogarden.app.algorithm.RiskLevel
+import com.neurogarden.app.algorithm.SignalPreprocessor
 import com.neurogarden.app.algorithm.TrendAnalyzer
 import com.neurogarden.app.data.local.HabitSampleEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
@@ -103,6 +104,11 @@ class PassiveGuardianService : Service() {
             app.habitRepository.getLatestThresholdProfile()
                 ?: HabitLearningEngine.buildThresholdProfile(baseline, now)
             ).applyCareModePolicy(policy, now)
+        val cleaned = SignalPreprocessor.preprocess(sample, baseline, thresholds, samples)
+        val cleanSample = cleaned.sample
+        val requestSamples = (listOf(cleanSample) + samples.filter { it.timestamp != sample.timestamp })
+            .sortedByDescending { it.timestamp }
+            .take(12)
         val weather = app.weatherRepository.current()
         val todayEvents = app.riskEventRepository.getTodayEvents(now)
         val recentFeedback = app.habitRepository.getRecentFeedbackRecords(12)
@@ -116,7 +122,7 @@ class PassiveGuardianService : Service() {
         )
         val agentRequest = AgentSignalRequest(
                 userId = "local-demo-user",
-                recentSignals = samples.map { it.toDto() },
+                recentSignals = requestSamples.map { it.toDto() },
                 currentBaseline = baseline.toDto(),
                 currentThresholds = thresholds.toDto(),
                 latestRiskScore = combinedRisk,
@@ -125,7 +131,12 @@ class PassiveGuardianService : Service() {
                 weather = weather.eventLabel(),
                 timeSegment = now.timeSegment(),
                 personalityModel = personalityModel,
-                recentActivity = recentActivity
+                recentActivity = recentActivity,
+                cleanedSignalSummary = cleaned.requestSummary(),
+                baselineDeviationPercent = cleaned.deviations,
+                dataQuality = cleaned.qualityLevel,
+                dataLimits = cleaned.dataLimits,
+                localEmotionGuess = cleaned.localEmotionSummary()
             )
         val agentStartedAt = System.currentTimeMillis()
         val agent = app.guardianAgentApi.analyzeSignals(agentRequest)
@@ -141,11 +152,11 @@ class PassiveGuardianService : Service() {
             latencyMs = agentLatencyMs,
             requestTime = now
         )
-        val risk = PersonalizedRiskCalculator.calculate(sample, baseline, thresholds, agent, samples)
+        val risk = PersonalizedRiskCalculator.calculate(cleanSample, baseline, thresholds, agent, samples)
         val trend = TrendAnalyzer.analyze(samples, now)
         val quality = DataQualityEvaluator.evaluate(samples, emptyList(), todayEvents, baseline)
         app.riskEventRepository.recordIfNeeded(
-            sample = sample,
+            sample = cleanSample,
             baseline = baseline,
             risk = risk,
             agentResponse = agent,

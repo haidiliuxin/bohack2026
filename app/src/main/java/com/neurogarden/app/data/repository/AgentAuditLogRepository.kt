@@ -23,7 +23,7 @@ class AgentAuditLogRepository(private val dao: AgentAuditLogDao) {
                 requestTime = requestTime,
                 triggerReason = triggerReason,
                 httpSuccess = httpSuccess,
-                responseEmotion = response?.emotionalState ?: response?.riskLevel ?: "unknown",
+                responseEmotion = response?.primaryEmotion ?: response?.emotionalState ?: response?.riskLevel ?: "unknown",
                 riskScore = response?.riskScore ?: 0f,
                 riskLevel = response?.riskLevel ?: "unknown",
                 confidence = response?.confidence ?: 0f,

@@ -16,7 +16,12 @@ data class EmotionalStateEstimate(
     val lonelinessScore: Float,
     val stressScore: Float,
     val interferenceReason: String?,
-    val explanation: String
+    val explanation: String,
+    val secondaryStates: List<String> = emptyList(),
+    val observedClues: List<String> = emptyList(),
+    val counterEvidence: List<String> = emptyList(),
+    val uncertainty: String? = null,
+    val emotionFamilyOverride: String? = null
 ) {
     companion object {
         fun learning(): EmotionalStateEstimate =

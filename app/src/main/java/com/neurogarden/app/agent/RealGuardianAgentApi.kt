@@ -18,14 +18,27 @@ class RealGuardianAgentApi : GuardianAgentApi {
             but treat them as weak signals. Prefer uncertainty over overclaiming.
             Return JSON only with these fields:
             state: stable|mild_fluctuation|observe|needs_confirmation|focus_attention|unknown
-            emotionalState: short Chinese label such as 平静专注|轻松平稳|积极活跃|安静恢复|疲惫恢复慢|高压紧张|焦虑紧绷|低落疲惫|可能需要陪伴|相对稳定
+            primaryEmotion: one short Chinese label such as 平静|专注|轻松|积极活跃|疲惫|紧张|烦躁|低落|孤独|空落|压力偏高|不确定
+            secondaryEmotions: string array, max 4, may include mixed emotions
+            emotionFamily: 高唤醒负向|低唤醒负向|低唤醒正向|高唤醒正向|中唤醒中性偏正|证据不足
+            emotionalState: same as primaryEmotion for backward compatibility
+            valence: -1.0 to 1.0
+            arousal: 0.0-1.0
+            stress: 0.0-1.0
+            fatigue: 0.0-1.0
+            loneliness: 0.0-1.0
             riskScore: 0-100
             confidence: 0.0-1.0
+            observedClues: string array, max 4, cite only structured clues
+            counterEvidence: string array, max 4
+            uncertainty: short sentence about limits
             mainReasons: string array, max 3
             suggestedAction: short non-medical action
             careMessage: short non-medical status note
             shouldNotifyGuardian: boolean
             metricDeviationPercent: object
+            supportStyle: gentle_short|grounding|breathing|observe
+            thresholdAdvice: short local-rule advice only, do not mutate thresholds
             reason: short summary
         """.trimIndent()
         val payload = JSONObject()
@@ -36,6 +49,11 @@ class RealGuardianAgentApi : GuardianAgentApi {
             .put("timeSegment", request.timeSegment ?: JSONObject.NULL)
             .put("personalityModel", request.personalityModel ?: JSONObject.NULL)
             .put("recentActivity", request.recentActivity ?: JSONObject.NULL)
+            .put("cleanedSignalSummary", request.cleanedSignalSummary ?: JSONObject.NULL)
+            .put("baselineDeviationPercent", JSONObject(request.baselineDeviationPercent.mapValues { it.value }))
+            .put("dataQuality", request.dataQuality ?: JSONObject.NULL)
+            .put("dataLimits", JSONArray().also { array -> request.dataLimits.forEach { array.put(it) } })
+            .put("localEmotionGuess", request.localEmotionGuess ?: JSONObject.NULL)
             .put("baseline", request.currentBaseline.toJson())
             .put("thresholds", request.currentThresholds.toJson())
             .put("recentSignals", JSONArray().also { array ->
