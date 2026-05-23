@@ -11,7 +11,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -28,7 +27,6 @@ import com.neurogarden.app.passive.NotificationPolicyStore
 import com.neurogarden.app.passive.PassiveDebugSnapshot
 import com.neurogarden.app.passive.PassiveDebugStore
 import com.neurogarden.app.passive.PassiveOverlayAlert
-import com.neurogarden.app.passive.PendingPassiveAlertStore
 import com.neurogarden.app.passive.WatchSignalStore
 import kotlinx.coroutines.delay
 
@@ -42,7 +40,6 @@ fun DebugLogScreen(
     var accessibility by remember { mutableStateOf(AccessibilitySignalStore.debugSnapshot(context)) }
     var watchSettings by remember { mutableStateOf(WatchSignalStore.readSettings(context)) }
     var watchPacket by remember { mutableStateOf(WatchSignalStore.currentPacket(context)) }
-    var pendingAlert by remember { mutableStateOf(PendingPassiveAlertStore.read(context)) }
     var notificationStatus by remember { mutableStateOf(NotificationPolicyStore.status(context)) }
 
     LaunchedEffect(Unit) {
@@ -51,7 +48,6 @@ fun DebugLogScreen(
             accessibility = AccessibilitySignalStore.debugSnapshot(context)
             watchSettings = WatchSignalStore.readSettings(context)
             watchPacket = WatchSignalStore.currentPacket(context)
-            pendingAlert = PendingPassiveAlertStore.read(context)
             notificationStatus = NotificationPolicyStore.status(context)
             delay(1000L)
         }
@@ -94,30 +90,9 @@ fun DebugLogScreen(
 
         DebugCard("提醒通道状态") {
             Text("悬浮窗权限：${if (PassiveOverlayAlert.canShow(context)) "已开启" else "未开启"}")
-            Text("待 App 内弹窗：${pendingAlert?.let { "${it.title} / ${timeText(it.createdAt)}" } ?: "无"}")
             Text("通知冷却剩余：${notificationStatus.cooldownRemainingMinutes} 分钟")
             Text("今日通知次数：${notificationStatus.countToday}/${notificationStatus.maxDaily}")
             Text("通知策略允许：${if (notificationStatus.canNotifyNow) "是" else "否"}")
-            OutlinedButton(
-                onClick = {
-                    val now = System.currentTimeMillis()
-                    val title = "开发者测试关怀弹窗"
-                    val message = "这是一条开发者工具手动触发的关怀弹窗，用于验证弹窗 UI、进入陪伴按钮和待处理提醒链路。"
-                    PendingPassiveAlertStore.save(
-                        context = context.applicationContext,
-                        title = title,
-                        message = message,
-                        now = now
-                    )
-                    if (PassiveOverlayAlert.canShow(context)) {
-                        PassiveOverlayAlert.show(context.applicationContext, title, message)
-                    }
-                    pendingAlert = PendingPassiveAlertStore.read(context.applicationContext)
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("一键呼出关怀弹窗")
-            }
         }
 
         DebugCard("Agent 审计日志") {
@@ -138,9 +113,7 @@ fun DebugLogScreen(
             }
         }
 
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
-            Text("返回")
-        }
+        com.neurogarden.app.ui.component.NeuroSecondaryButton("返回", onBack, Modifier.fillMaxWidth())
     }
 }
 

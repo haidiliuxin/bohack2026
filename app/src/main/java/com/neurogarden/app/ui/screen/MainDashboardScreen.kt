@@ -140,12 +140,22 @@ private data class PersonalInfoDraft(
     val nickname: String = "林林",
     val name: String = "林林",
     val phone: String = "",
+    val note: String = ""
+)
+
+private data class PersonalCaseDraft(
+    val name: String = "林林",
     val age: String = "",
     val gender: String = "",
     val height: String = "",
-    val weight: String = "",
     val bloodType: String = "",
-    val note: String = ""
+    val medicalHistory: String = "",
+    val recentMedication: String = ""
+)
+
+private data class EmergencyContactDraft(
+    val name: String = "",
+    val phone: String = ""
 )
 
 @Composable
@@ -191,14 +201,17 @@ fun MainDashboardScreen(
     onCareModeChange: (CareMode) -> Unit,
     onDismissIntegrationDemoAlert: () -> Unit,
     onDebugLog: () -> Unit,
-    openChatRequest: Int = 0
+    onShowDeveloperOverlayAlert: () -> Unit,
+    onShowDeveloperInAppAlert: () -> Unit,
+    openChatRequest: Int = 0,
+    openMindfulnessRequest: Int = 0
 ) {
     var tab by remember { mutableStateOf(MainTab.TODAY) }
     var selectedEventId by remember { mutableStateOf<Long?>(null) }
     var mindfulnessMode by remember { mutableStateOf(false) }
     var dismissedAlertEventId by remember { mutableStateOf<Long?>(null) }
     var dismissedAlertAt by remember { mutableStateOf(0L) }
-    var showGuardianHealthEditor by remember { mutableStateOf(false) }
+    var showEmergencyContactsPage by remember { mutableStateOf(false) }
     var showPersonalInfoEditor by remember { mutableStateOf(false) }
     var showPermissionPage by remember { mutableStateOf(false) }
     var healthInfo by remember {
@@ -211,6 +224,17 @@ fun MainDashboardScreen(
         )
     }
     var personalInfo by remember { mutableStateOf(PersonalInfoDraft()) }
+    var personalCase by remember { mutableStateOf(PersonalCaseDraft()) }
+    var emergencyContacts by remember {
+        mutableStateOf(
+            listOf(
+                EmergencyContactDraft(
+                    name = guardianProfile.guardianName.ifBlank { "妈妈" },
+                    phone = guardianProfile.phone
+                )
+            )
+        )
+    }
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
@@ -219,6 +243,15 @@ fun MainDashboardScreen(
             selectedEventId = null
             mindfulnessMode = false
             onBeginSupportConversation()
+            tab = MainTab.CHAT
+        }
+    }
+
+    LaunchedEffect(openMindfulnessRequest) {
+        if (openMindfulnessRequest > 0) {
+            selectedEventId = null
+            onBeginSupportConversation()
+            mindfulnessMode = true
             tab = MainTab.CHAT
         }
     }
@@ -274,56 +307,80 @@ fun MainDashboardScreen(
                     onConnectWear = onConnectWear
                 )
 
-                MainTab.GUARDIAN -> if (showGuardianHealthEditor) {
-                    HealthInfoEditPage(
-                        info = healthInfo,
-                        onInfoChange = { healthInfo = it },
-                        onSave = {
-                            healthInfo = it
+                MainTab.GUARDIAN -> when {
+                    showEmergencyContactsPage -> EmergencyContactsPage(
+                        contacts = emergencyContacts,
+                        onContactsChange = { emergencyContacts = it },
+                        onSave = { contacts ->
+                            emergencyContacts = contacts
+                            val first = contacts.firstOrNull()
                             onGuardianProfileChange(
                                 guardianProfile.copy(
-                                    guardianName = it.emergencyName.ifBlank { guardianProfile.guardianName },
-                                    phone = it.emergencyPhone.ifBlank { guardianProfile.phone },
+                                    guardianName = first?.name?.ifBlank { guardianProfile.guardianName } ?: guardianProfile.guardianName,
+                                    phone = first?.phone?.ifBlank { guardianProfile.phone } ?: guardianProfile.phone
+                                )
+                            )
+                            showEmergencyContactsPage = false
+                        },
+                        onBack = { showEmergencyContactsPage = false }
+                    )
+                    showPersonalInfoEditor -> PersonalCaseEditPage(
+                        info = personalCase,
+                        onInfoChange = { personalCase = it },
+                        onSave = {
+                            personalCase = it
+                            healthInfo = healthInfo.copy(
+                                name = it.name,
+                                age = it.age,
+                                height = it.height,
+                                bloodType = it.bloodType,
+                                medicalHistory = it.medicalHistory
+                            )
+                            onGuardianProfileChange(
+                                guardianProfile.copy(
                                     emergencyNote = listOf(
-                                        it.bodyStatus.takeIf { value -> value.isNotBlank() }?.let { value -> "身体状况：$value" },
-                                        it.medicalHistory.takeIf { value -> value.isNotBlank() }?.let { value -> "既往病史：$value" },
-                                        it.note.takeIf { value -> value.isNotBlank() }?.let { value -> "备注：$value" }
+                                        it.medicalHistory.takeIf { value -> value.isNotBlank() }?.let { value -> "过往病史：$value" },
+                                        it.recentMedication.takeIf { value -> value.isNotBlank() }?.let { value -> "近期服药：$value" }
                                     ).filterNotNull().joinToString("；").ifBlank { guardianProfile.emergencyNote }
                                 )
                             )
-                            showGuardianHealthEditor = false
+                            showPersonalInfoEditor = false
                         },
-                        onBack = { showGuardianHealthEditor = false }
+                        onBack = { showPersonalInfoEditor = false }
                     )
-                } else GuardianTab(
-                    realtime = realtime,
-                    summary = todaySummary,
-                    settings = guardianSettings,
-                    profile = guardianProfile,
-                    notificationRecords = guardianNotificationRecords,
-                    feedbackRecords = guardianFeedbackRecords,
-                    careMode = careMode,
-                    policy = careModePolicy,
-                    latestEvent = latestEvent,
-                    onSettingsChange = onGuardianSettingsChange,
-                    onProfileChange = onGuardianProfileChange,
-                    onStartPassiveGuardian = onStartPassiveGuardian,
-                    onStopPassiveGuardian = onStopPassiveGuardian,
-                    onFeedback = { feedback ->
-                        latestEvent?.let { onEventFeedback(it.id, feedback) } ?: onFeedback(feedback)
-                    },
-                    onSimulateGuardianNotification = {
-                        latestEvent?.let(onSimulateGuardianNotification)
-                    },
-                    onSendGuardianSms = {
-                        latestEvent?.let(onSendGuardianSms)
-                    },
-                    onRemoteGuardianFeedback = { action ->
-                        latestEvent?.let { onRemoteGuardianFeedback(it, action) }
-                    },
-                    onOpenHealthInfo = { showGuardianHealthEditor = true },
-                    healthInfo = healthInfo
-                )
+                    else -> GuardianTab(
+                        realtime = realtime,
+                        summary = todaySummary,
+                        settings = guardianSettings,
+                        profile = guardianProfile,
+                        notificationRecords = guardianNotificationRecords,
+                        feedbackRecords = guardianFeedbackRecords,
+                        careMode = careMode,
+                        policy = careModePolicy,
+                        latestEvent = latestEvent,
+                        onSettingsChange = onGuardianSettingsChange,
+                        onProfileChange = onGuardianProfileChange,
+                        onStartPassiveGuardian = onStartPassiveGuardian,
+                        onStopPassiveGuardian = onStopPassiveGuardian,
+                        onFeedback = { feedback ->
+                            latestEvent?.let { onEventFeedback(it.id, feedback) } ?: onFeedback(feedback)
+                        },
+                        onSimulateGuardianNotification = {
+                            latestEvent?.let(onSimulateGuardianNotification)
+                        },
+                        onSendGuardianSms = {
+                            latestEvent?.let(onSendGuardianSms)
+                        },
+                        onRemoteGuardianFeedback = { action ->
+                            latestEvent?.let { onRemoteGuardianFeedback(it, action) }
+                        },
+                        onOpenEmergencyContacts = { showEmergencyContactsPage = true },
+                        onOpenPersonalCase = { showPersonalInfoEditor = true },
+                        contacts = emergencyContacts,
+                        healthInfo = healthInfo,
+                        personalCase = personalCase
+                    )
+                }
 
                 MainTab.CHAT -> ChatTab(
                     realtime = realtime,
@@ -377,6 +434,8 @@ fun MainDashboardScreen(
                     onClearHabitMemory = onClearHabitMemory,
                     onSeedDemoMode = onSeedDemoMode,
                     onDebugLog = onDebugLog,
+                    onShowDeveloperOverlayAlert = onShowDeveloperOverlayAlert,
+                    onShowDeveloperInAppAlert = onShowDeveloperInAppAlert,
                     personalInfo = personalInfo,
                     onOpenPersonalInfo = { showPersonalInfoEditor = true },
                     onOpenPermissionPage = { showPermissionPage = true }
@@ -891,8 +950,11 @@ private fun GuardianTab(
     onSimulateGuardianNotification: () -> Unit,
     onSendGuardianSms: () -> Unit,
     onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit,
-    onOpenHealthInfo: () -> Unit,
-    healthInfo: HealthInfoDraft
+    onOpenEmergencyContacts: () -> Unit,
+    onOpenPersonalCase: () -> Unit,
+    contacts: List<EmergencyContactDraft>,
+    healthInfo: HealthInfoDraft,
+    personalCase: PersonalCaseDraft
 ) {
     val context = LocalContext.current
     var emotionSensitivity by remember { mutableFloatStateOf(0.60f) }
@@ -967,21 +1029,25 @@ private fun GuardianTab(
 
         NeuroListRow(
             title = "紧急联系人",
-            subtitle = "${profile.guardianName.ifBlank { settings.name }} · ${profile.relationship.ifBlank { settings.relation }} · ${profile.authorizationStatus.displayName}",
+            subtitle = contacts.joinToString(" / ") { contact ->
+                "${contact.name.ifBlank { "未命名" }} ${contact.phone.ifBlank { "未填写电话" }}"
+            }.ifBlank {
+                "${profile.guardianName.ifBlank { settings.name }} · ${profile.authorizationStatus.displayName}"
+            },
             leading = { SmallStatusDot(NeuroColors.Coral) },
             trailing = { Text("编辑", color = NeuroColors.Blue) },
-            modifier = Modifier.clickable { onOpenHealthInfo() }
+            modifier = Modifier.clickable { onOpenEmergencyContacts() }
         )
         NeuroListRow(
             title = "个人简介 / 病例信息",
-            subtitle = healthInfo.bodyStatus.ifBlank {
+            subtitle = personalCase.medicalHistory.ifBlank {
                 healthInfo.medicalHistory.ifBlank {
                     profile.emergencyNote.ifBlank { "点击补充基础健康信息" }
                 }
             },
             leading = { SmallStatusDot(NeuroColors.Blue) },
             trailing = { Text("编辑", color = NeuroColors.Blue) },
-            modifier = Modifier.clickable { onOpenHealthInfo() }
+            modifier = Modifier.clickable { onOpenPersonalCase() }
         )
 
         if (latestEvent != null) {
@@ -996,10 +1062,7 @@ private fun GuardianTab(
                 )
                 NeuroSecondaryButton(
                     text = "短信通知",
-                    onClick = {
-                        onSendGuardianSms()
-                        Toast.makeText(context, "已打开短信通知草稿", Toast.LENGTH_SHORT).show()
-                    },
+                    onClick = { onSendGuardianSms() },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -1234,7 +1297,7 @@ private fun ParticleSphere(
     Canvas(modifier = Modifier.size(size)) {
         val center = Offset(this.size.width / 2f, this.size.height / 2f)
         val radius = this.size.minDimension * 0.36f * breath
-        val count = if (mindfulness) 720 else 560
+        val count = if (mindfulness) 1280 else 980
         val golden = PI * (3.0 - kotlin.math.sqrt(5.0))
         repeat(count) { index ->
             val k = index + 0.5
@@ -1246,10 +1309,10 @@ private fun ParticleSphere(
             val perspective = 0.72 + 0.28 * ((z3 + 1.0) / 2.0)
             val x = center.x + (x3 * radius * perspective).toFloat()
             val y = center.y + (y3 * radius * perspective).toFloat()
-            val alpha = (0.10 + 0.46 * ((z3 + 1.0) / 2.0)).toFloat()
+            val alpha = (0.16 + 0.54 * ((z3 + 1.0) / 2.0)).toFloat()
             drawCircle(
                 color = baseColor.copy(alpha = alpha),
-                radius = (0.85f + 1.15f * perspective.toFloat()) * if (mindfulness) 1.06f else 1f,
+                radius = (1.12f + 1.36f * perspective.toFloat()) * if (mindfulness) 1.10f else 1f,
                 center = Offset(x, y)
             )
         }
@@ -1397,6 +1460,8 @@ private fun SettingsTab(
     onClearHabitMemory: () -> Unit,
     onSeedDemoMode: (String) -> Unit,
     onDebugLog: () -> Unit,
+    onShowDeveloperOverlayAlert: () -> Unit,
+    onShowDeveloperInAppAlert: () -> Unit,
     personalInfo: PersonalInfoDraft,
     onOpenPersonalInfo: () -> Unit,
     onOpenPermissionPage: () -> Unit
@@ -1485,9 +1550,10 @@ private fun SettingsTab(
                     NeuroSecondaryButton("Debug 日志", onDebugLog, Modifier.weight(1f))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    NeuroSecondaryButton("连接手表", onConnectWear, Modifier.weight(1f))
-                    NeuroSecondaryButton("呼吸引导", onSendWearBreathPattern, Modifier.weight(1f))
+                    NeuroSecondaryButton("呼出悬浮窗", onShowDeveloperOverlayAlert, Modifier.weight(1f))
+                    NeuroSecondaryButton("呼出应用内弹窗", onShowDeveloperInAppAlert, Modifier.weight(1f))
                 }
+                NeuroSecondaryButton("连接手表", onConnectWear, Modifier.fillMaxWidth())
                 FilterChip(
                     selected = settings.watchSimulationEnabled,
                     onClick = { onSettingsChange(settings.copy(watchSimulationEnabled = !settings.watchSimulationEnabled)) },
@@ -1556,6 +1622,56 @@ private fun HealthInfoEditPage(
 }
 
 @Composable
+private fun EmergencyContactsPage(
+    contacts: List<EmergencyContactDraft>,
+    onContactsChange: (List<EmergencyContactDraft>) -> Unit,
+    onSave: (List<EmergencyContactDraft>) -> Unit,
+    onBack: () -> Unit
+) {
+    var draft by remember(contacts) {
+        mutableStateOf(contacts.ifEmpty { listOf(EmergencyContactDraft()) })
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = 106.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("‹", color = NeuroColors.Blue, fontSize = 30.sp, modifier = Modifier.clickable { onBack() })
+                Text("紧急联系人", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            }
+            CircleIconButton("+") {
+                draft = draft + EmergencyContactDraft()
+                onContactsChange(draft)
+            }
+        }
+        Text("用于守护提醒和必要时联系。这里只保存姓名和手机号。", color = NeuroColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        draft.forEachIndexed { index, contact ->
+            NeuroCard(modifier = Modifier.fillMaxWidth()) {
+                Text("联系人 ${index + 1}", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                EditField("姓名", contact.name) { value ->
+                    draft = draft.toMutableList().also { it[index] = contact.copy(name = value) }
+                    onContactsChange(draft)
+                }
+                EditField("手机号", contact.phone) { value ->
+                    draft = draft.toMutableList().also { it[index] = contact.copy(phone = value) }
+                    onContactsChange(draft)
+                }
+            }
+        }
+        NeuroPrimaryButton("保存", { onSave(draft.filter { it.name.isNotBlank() || it.phone.isNotBlank() }.ifEmpty { listOf(EmergencyContactDraft()) }) }, Modifier.fillMaxWidth())
+        NeuroSecondaryButton("返回", onBack, Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
 private fun PersonalInfoEditPage(
     info: PersonalInfoDraft,
     onInfoChange: (PersonalInfoDraft) -> Unit,
@@ -1570,7 +1686,7 @@ private fun PersonalInfoEditPage(
             .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = 106.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("个人信息", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Text("个人资料", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         NeuroCard(modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
@@ -1584,12 +1700,37 @@ private fun PersonalInfoEditPage(
             EditField("昵称", draft.nickname) { draft = draft.copy(nickname = it); onInfoChange(draft) }
             EditField("姓名", draft.name) { draft = draft.copy(name = it); onInfoChange(draft) }
             EditField("手机号", draft.phone) { draft = draft.copy(phone = it); onInfoChange(draft) }
+            EditField("备注", draft.note) { draft = draft.copy(note = it); onInfoChange(draft) }
+        }
+        NeuroPrimaryButton("保存", { onSave(draft) }, Modifier.fillMaxWidth())
+        NeuroSecondaryButton("返回", onBack, Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun PersonalCaseEditPage(
+    info: PersonalCaseDraft,
+    onInfoChange: (PersonalCaseDraft) -> Unit,
+    onSave: (PersonalCaseDraft) -> Unit,
+    onBack: () -> Unit
+) {
+    var draft by remember(info) { mutableStateOf(info) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = 106.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("个人病例", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+            EditField("姓名", draft.name) { draft = draft.copy(name = it); onInfoChange(draft) }
             EditField("年龄", draft.age) { draft = draft.copy(age = it); onInfoChange(draft) }
             EditField("性别", draft.gender) { draft = draft.copy(gender = it); onInfoChange(draft) }
             EditField("身高", draft.height) { draft = draft.copy(height = it); onInfoChange(draft) }
-            EditField("体重", draft.weight) { draft = draft.copy(weight = it); onInfoChange(draft) }
             EditField("血型", draft.bloodType) { draft = draft.copy(bloodType = it); onInfoChange(draft) }
-            EditField("备注", draft.note) { draft = draft.copy(note = it); onInfoChange(draft) }
+            EditField("过往病史", draft.medicalHistory) { draft = draft.copy(medicalHistory = it); onInfoChange(draft) }
+            EditField("近期服药记录", draft.recentMedication) { draft = draft.copy(recentMedication = it); onInfoChange(draft) }
         }
         NeuroPrimaryButton("保存", { onSave(draft) }, Modifier.fillMaxWidth())
         NeuroSecondaryButton("返回", onBack, Modifier.fillMaxWidth())
@@ -1653,7 +1794,7 @@ private fun EditField(label: String, value: String, onValueChange: (String) -> U
         onValueChange = onValueChange,
         label = { Text(label) },
         modifier = Modifier.fillMaxWidth(),
-        singleLine = label !in listOf("身体状况", "既往病史", "备注")
+        singleLine = label !in listOf("身体状况", "既往病史", "过往病史", "近期服药记录", "备注")
     )
 }
 

@@ -17,7 +17,6 @@ import com.neurogarden.app.MainActivity
 
 object PassiveOverlayAlert {
     private var currentView: View? = null
-    private var breathRunnable: Runnable? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun canShow(context: Context): Boolean =
@@ -61,8 +60,20 @@ object PassiveOverlayAlert {
                 setOnClickListener { dismiss(appContext) }
             }
             val breathingButton = Button(appContext).apply {
-                text = "30秒呼吸"
-                setOnClickListener { startBreathingGuide(careView) }
+                text = "呼吸引导"
+                setOnClickListener {
+                    appContext.startActivity(
+                        Intent(appContext, MainActivity::class.java)
+                            .setAction(MainActivity.ACTION_OPEN_BREATHING)
+                            .putExtra(MainActivity.EXTRA_OPEN_BREATHING, true)
+                            .addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            )
+                    )
+                    dismiss(appContext)
+                }
             }
             val openChatButton = Button(appContext).apply {
                 text = "和我聊聊"
@@ -71,7 +82,11 @@ object PassiveOverlayAlert {
                         Intent(appContext, MainActivity::class.java)
                             .setAction(MainActivity.ACTION_OPEN_CHAT)
                             .putExtra(MainActivity.EXTRA_OPEN_CHAT, true)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            .addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            )
                     )
                     dismiss(appContext)
                 }
@@ -110,28 +125,7 @@ object PassiveOverlayAlert {
         }
     }
 
-    private fun startBreathingGuide(target: TextView) {
-        val steps = listOf(
-            "吸气：像闻到清新的空气一样，慢慢数到 4。",
-            "停一下：肩膀可以放低一点，手指松开。",
-            "呼气：慢慢数到 6，把刚才绷紧的感觉送出去。",
-            "再来一轮：只做这一口气就好，不用急着解决全部问题。"
-        )
-        var index = 0
-        breathRunnable?.let { mainHandler.removeCallbacks(it) }
-        breathRunnable = object : Runnable {
-            override fun run() {
-                target.text = steps[index % steps.size]
-                index += 1
-                if (index <= 8) mainHandler.postDelayed(this, 4_000L)
-            }
-        }
-        breathRunnable?.let { mainHandler.post(it) }
-    }
-
     fun dismiss(context: Context) {
-        breathRunnable?.let { mainHandler.removeCallbacks(it) }
-        breathRunnable = null
         val manager = context.applicationContext.getSystemService(WindowManager::class.java)
         currentView?.let { view ->
             runCatching { manager.removeView(view) }

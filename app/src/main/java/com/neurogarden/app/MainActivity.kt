@@ -66,6 +66,7 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
     private val openChatRequests = MutableStateFlow(0)
+    private val openMindfulnessRequests = MutableStateFlow(0)
 
     private val mainViewModel by viewModels<MainViewModel> {
         MainViewModel.Factory(
@@ -87,8 +88,9 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
         handleOpenChatIntent(intent)
         setContent {
             val openChatRequest by openChatRequests.collectAsStateWithLifecycle()
+            val openMindfulnessRequest by openMindfulnessRequests.collectAsStateWithLifecycle()
             NeuroGardenTheme {
-                NeuroGardenRoot(mainViewModel, therapyViewModel, openChatRequest)
+                NeuroGardenRoot(mainViewModel, therapyViewModel, openChatRequest, openMindfulnessRequest)
             }
         }
     }
@@ -124,14 +126,18 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
     }
 
     private fun handleOpenChatIntent(intent: Intent?) {
-        if (intent?.action == ACTION_OPEN_CHAT || intent?.getBooleanExtra(EXTRA_OPEN_CHAT, false) == true) {
+        if (intent?.action == ACTION_OPEN_BREATHING || intent?.getBooleanExtra(EXTRA_OPEN_BREATHING, false) == true) {
+            openMindfulnessRequests.value = openMindfulnessRequests.value + 1
+        } else if (intent?.action == ACTION_OPEN_CHAT || intent?.getBooleanExtra(EXTRA_OPEN_CHAT, false) == true) {
             openChatRequests.value = openChatRequests.value + 1
         }
     }
 
     companion object {
         const val ACTION_OPEN_CHAT = "com.neurogarden.app.OPEN_CHAT"
+        const val ACTION_OPEN_BREATHING = "com.neurogarden.app.OPEN_BREATHING"
         const val EXTRA_OPEN_CHAT = "open_chat"
+        const val EXTRA_OPEN_BREATHING = "open_breathing"
     }
 }
 
@@ -139,7 +145,8 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
 private fun NeuroGardenRoot(
     mainViewModel: MainViewModel,
     therapyViewModel: TherapyViewModel,
-    externalOpenChatRequest: Int
+    externalOpenChatRequest: Int,
+    externalOpenMindfulnessRequest: Int
 ) {
     var guardianSettings by remember { mutableStateOf(GuardianSettings()) }
     var guardianProfile by remember {
@@ -268,10 +275,6 @@ private fun NeuroGardenRoot(
                 Toast.makeText(context, "请先填写监护人手机号", Toast.LENGTH_SHORT).show()
             }
 
-            guardianProfile.authorizationStatus != GuardianAuthorizationStatus.AUTHORIZED -> {
-                Toast.makeText(context, "请先在守护页确认授权，再打开短信通知", Toast.LENGTH_SHORT).show()
-            }
-
             else -> {
                 val message = buildGuardianSmsMessage(event)
                 val now = System.currentTimeMillis()
@@ -287,7 +290,7 @@ private fun NeuroGardenRoot(
                     deviationLevel = null,
                     sentAt = now,
                     cooldownApplied = false,
-                    strategyTags = listOf("user_confirmed_sms", "system_sms_app"),
+                    strategyTags = listOf("manual_user_confirmed_sms", "system_sms_app"),
                     messagePreview = message
                 )
                 guardianNotificationRecords = listOf(draftRecord) + guardianNotificationRecords
@@ -446,7 +449,31 @@ private fun NeuroGardenRoot(
                 onCareModeChange = mainViewModel::setCareMode,
                 onDismissIntegrationDemoAlert = mainViewModel::dismissIntegrationDemoAlert,
                 onDebugLog = { showDebugLog = true },
-                openChatRequest = externalOpenChatRequest + localOpenChatRequest
+                onShowDeveloperOverlayAlert = {
+                    val title = "开发者测试悬浮窗"
+                    val message = "这是一条只触发系统悬浮窗的开发者测试提醒，用于验证后台覆盖层和“和我聊聊”跳转。"
+                    if (PassiveOverlayAlert.canShow(context)) {
+                        Toast.makeText(context, "已安排悬浮窗，约 1 分钟后显示", Toast.LENGTH_SHORT).show()
+                        coroutineScope.launch {
+                            kotlinx.coroutines.delay(60_000L)
+                            PassiveOverlayAlert.show(context.applicationContext, title, message)
+                        }
+                    } else {
+                        Toast.makeText(context, "请先开启悬浮窗权限", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onShowDeveloperInAppAlert = {
+                    val now = System.currentTimeMillis()
+                    PendingPassiveAlertStore.save(
+                        context = context.applicationContext,
+                        title = "开发者测试关怀弹窗",
+                        message = "这是一条只触发 App 内弹窗的开发者测试提醒，用于验证进入陪伴按钮和待处理提醒链路。",
+                        now = now
+                    )
+                    pendingPassiveAlert = PendingPassiveAlertStore.read(context.applicationContext)
+                },
+                openChatRequest = externalOpenChatRequest + localOpenChatRequest,
+                openMindfulnessRequest = externalOpenMindfulnessRequest
             )
         }
     }
@@ -498,16 +525,52 @@ private fun buildGuardianSmsMessage(event: com.neurogarden.app.data.local.RiskEv
         .split("|", ";", "、")
         .map { it.trim() }
         .filter { it.isNotBlank() }
-        .take(3)
-        .joinToString(" / ")
-        .ifBlank { "continuous rhythm deviation" }
-    val level = when (event.riskLevel) {
-        "guardian_check" -> "care confirmation suggested"
-        "urgent_support" -> "focus attention"
-        "support" -> "guardian reminder"
-        "observe" -> "observe needed"
-        else -> "state fluctuation"
+        .take(2)
+        .joinToString("、")
+        .ifBlank { "状态节律与平时不太一样" }
+    val emotion = event.agentAnalysis.extractAgentValue("emotion")
+        .ifBlank { event.agentAnalysis.extractAgentValue("state") }
+        .toGuardianEmotionLabel(event.riskLevel)
+    val opening = when (event.riskLevel) {
+        "urgent_support" -> "刚刚观察到 TA 的状态波动比较明显，建议尽快温和确认一下。"
+        "guardian_check" -> "刚刚观察到 TA 的状态节律有些偏离日常，建议你方便时轻轻确认一下。"
+        "support" -> "刚刚观察到 TA 可能需要一点陪伴，建议你方便时发一句问候。"
+        "observe" -> "刚刚观察到 TA 的状态有轻微波动，可以先留意一下。"
+        else -> "刚刚观察到 TA 的状态节律和平时不太一样。"
     }
-    return "NeuroGarden reminder: continuous rhythm deviation detected. Current level: $level. Reasons: $reasons. Structured summary only, no original text, not a medical diagnosis."
-        .take(150)
+    val suggestion = when (event.riskLevel) {
+        "urgent_support" -> "可以先问：“我在，方便回我一句吗？”"
+        "guardian_check", "support" -> "可以先问：“我在，今天还好吗？”"
+        else -> "可以先不打扰，稍后再看一次状态。"
+    }
+    return "【NeuroGarden】$opening 当前推测状态：$emotion。原因：$reasons。$suggestion 本提醒不含聊天原文，仅用于守护确认，不代表医疗诊断。"
+        .take(180)
+}
+
+private fun String.extractAgentValue(key: String): String {
+    val pattern = Regex("""(?:^|;)$key=([^;]+)""")
+    return pattern.find(this)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+}
+
+private fun String.toGuardianEmotionLabel(riskLevel: String): String {
+    val value = trim().lowercase()
+    return when {
+        value.isBlank() || value == "unknown" -> when (riskLevel) {
+            "urgent_support" -> "高压或明显不适"
+            "guardian_check" -> "需要确认的状态波动"
+            "support" -> "可能有些吃力"
+            "observe" -> "轻微波动"
+            else -> "暂未明确"
+        }
+        value.contains("calm") || value.contains("stable") || value.contains("平静") -> "相对平静"
+        value.contains("tired") || value.contains("fatigue") || value.contains("疲") -> "疲惫"
+        value.contains("stress") || value.contains("pressure") || value.contains("高压") || value.contains("紧张") -> "紧张或压力偏高"
+        value.contains("anxious") || value.contains("anxiety") || value.contains("焦虑") -> "焦虑或不安"
+        value.contains("low") || value.contains("sad") || value.contains("down") || value.contains("低落") -> "低落"
+        value.contains("irritable") || value.contains("烦") || value.contains("躁") -> "烦躁"
+        value.contains("lonely") || value.contains("empty") || value.contains("孤独") || value.contains("空落") -> "孤独或空落"
+        value.contains("positive") || value.contains("active") || value.contains("积极") -> "积极"
+        value.contains("neutral") || value.contains("中性") -> "中性偏平稳"
+        else -> this.trim().take(18)
+    }
 }
