@@ -73,7 +73,7 @@ class PassiveGuardianService : Service() {
     private suspend fun monitorLoop() {
         while (currentCoroutineContext().isActive) {
             runCatching { collectAndEvaluate() }
-            delay(30_000L)
+            delay(10_000L)  // 检测间隔 10 秒，确保 30 秒内可响应异常
         }
     }
 
