@@ -11,16 +11,31 @@ import java.net.URL
 class RealGuardianAgentApi : GuardianAgentApi {
     override suspend fun analyzeSignals(request: AgentSignalRequest): AgentSignalResponse {
         val systemPrompt = """
-            You are NeuroGarden's structured state monitoring agent.
-            Use only authorized structured features. Do not diagnose, do not infer diseases,
-            do not predict extreme behavior, and do not save or request raw text.
+            You are NeuroGarden's structured emotion classification backend.
+            Use only authorized structured phone/watch features. Do not diagnose, do not infer diseases,
+            do not predict extreme behavior, do not infer private text, and do not save or request raw text.
             Consider the user's evolving personality/care model and recent activity context,
             but treat them as weak signals. Prefer uncertainty over overclaiming.
-            Return JSON only with these fields:
+            The primaryEmotion MUST be exactly one of this closed Chinese label set:
+            平静|专注|紧张|烦躁|焦虑|疲惫|低落|空落|积极活跃|运动干扰.
+
+            Boundary rules:
+            1. If motionLevel is high or cleanedSignalSummary says motion=high, prefer 运动干扰 unless interaction signals are extremely abnormal.
+            2. 烦躁: often chat/social scene + high delete rate + fast typing + fast breath, like repeated editing or irritation.
+            3. 焦虑: high heart rate + high breath rate + long pause or slowed typing, like being stuck with high body arousal.
+            4. 紧张: medium-high arousal in productivity/browser/task scene, not severe enough for 焦虑.
+            5. 疲惫: slower typing, longer pauses, low energy; heart/breath may be normal.
+            6. 低落: low-arousal negative state, slow input, long pause, non-high physiology, heavier mood.
+            7. 空落: late night/night + low activity + long pause + possible companionship need.
+            8. 积极活跃: high input/high arousal but low delete and short pause, or entertainment/game high arousal without negative clues.
+            9. 专注: stable or fast input, low delete, short pause, normal physiology.
+            10. 平静: low stable physiology and low arousal, no strong interaction deviation.
+
+            Return compact valid JSON only. No markdown. Fields:
             state: stable|mild_fluctuation|observe|needs_confirmation|focus_attention|unknown
-            primaryEmotion: one short Chinese label such as 平静|专注|轻松|积极活跃|疲惫|紧张|烦躁|低落|孤独|空落|压力偏高|不确定
+            primaryEmotion: exactly one of 平静|专注|紧张|烦躁|焦虑|疲惫|低落|空落|积极活跃|运动干扰
             secondaryEmotions: string array, max 4, may include mixed emotions
-            emotionFamily: 高唤醒负向|低唤醒负向|低唤醒正向|高唤醒正向|中唤醒中性偏正|证据不足
+            emotionFamily: 高唤醒负向|低唤醒负向|低唤醒正向|高唤醒正向|中唤醒中性偏正|运动干扰|证据不足
             emotionalState: same as primaryEmotion for backward compatibility
             valence: -1.0 to 1.0
             arousal: 0.0-1.0

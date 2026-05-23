@@ -18,10 +18,12 @@ object EmotionLabelNormalizer {
         "积极活跃" to NormalizedEmotionLabel("积极活跃", "高唤醒正向", 0.64f, 0.72f, 0.22f, 0.10f, 0.06f),
         "疲惫" to NormalizedEmotionLabel("疲惫", "低能量负向", -0.30f, 0.28f, 0.26f, 0.72f, 0.18f),
         "紧张" to NormalizedEmotionLabel("紧张", "高唤醒负向", -0.42f, 0.72f, 0.76f, 0.24f, 0.12f),
+        "焦虑" to NormalizedEmotionLabel("焦虑", "高唤醒负向", -0.55f, 0.82f, 0.86f, 0.34f, 0.20f),
         "烦躁" to NormalizedEmotionLabel("烦躁", "高唤醒负向", -0.50f, 0.78f, 0.70f, 0.34f, 0.10f),
         "低落" to NormalizedEmotionLabel("低落", "低唤醒负向", -0.62f, 0.24f, 0.38f, 0.56f, 0.42f),
         "孤独" to NormalizedEmotionLabel("孤独", "低唤醒负向", -0.54f, 0.22f, 0.30f, 0.32f, 0.76f),
         "空落" to NormalizedEmotionLabel("空落", "低唤醒负向", -0.48f, 0.24f, 0.28f, 0.44f, 0.62f),
+        "运动干扰" to NormalizedEmotionLabel("运动干扰", "运动干扰", 0f, 0.40f, 0.18f, 0.12f, 0.05f),
         "压力偏高" to NormalizedEmotionLabel("压力偏高", "高唤醒负向", -0.38f, 0.64f, 0.82f, 0.34f, 0.12f),
         "不确定" to NormalizedEmotionLabel("不确定", "证据不足", 0f, 0f, 0f, 0f, 0f)
     )
@@ -35,11 +37,13 @@ object EmotionLabelNormalizer {
             text.contains("积极") || text.contains("活跃") || text.contains("兴奋") -> "积极活跃"
             text.contains("疲") || text.contains("累") || text.contains("困") -> "疲惫"
             text.contains("烦") || text.contains("躁") || text.contains("恼") -> "烦躁"
+            text.contains("焦虑") || text.contains("不安") -> "焦虑"
             text.contains("紧张") || text.contains("慌") || text.contains("绷") -> "紧张"
             text.contains("低落") || text.contains("难过") || text.contains("沮丧") -> "低落"
             text.contains("孤独") || text.contains("陪伴") -> "孤独"
             text.contains("空") || text.contains("空落") -> "空落"
             text.contains("压力") || text.contains("高压") -> "压力偏高"
+            text.contains("运动") || text.contains("干扰") -> "运动干扰"
             text.contains("平静") || text.contains("稳定") || text.contains("正常") -> "平静"
             else -> text.take(12)
         }
