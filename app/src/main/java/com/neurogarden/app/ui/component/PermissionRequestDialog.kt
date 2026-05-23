@@ -1,234 +1,94 @@
 package com.neurogarden.app.ui.component
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 
-/**
- * 权限说明数据类
- */
-data class PermissionInfo(
-    val permission: String,
-    val title: String,
-    val description: String,
-    val isRequired: Boolean = true
-)
-
-/**
- * 权限申请弹窗组件
- * 首次启动时显示，说明应用需要的权限
- */
 @Composable
 fun PermissionRequestDialog(
     onDismiss: () -> Unit,
     onRequestPermissions: () -> Unit
 ) {
     val context = LocalContext.current
-
-    // 需要申请的权限列表
-    val permissionsToRequest = remember {
-        buildList {
-            // 通知权限 (Android 13+)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(
-                    PermissionInfo(
-                        permission = Manifest.permission.POST_NOTIFICATIONS,
-                        title = "通知权限",
-                        description = "用于发送状态提醒、守护确认和照护提醒。",
-                        isRequired = false
-                    )
-                )
-            }
-            // 蓝牙连接权限 (Android 12+)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                add(
-                    PermissionInfo(
-                        permission = Manifest.permission.BLUETOOTH_CONNECT,
-                        title = "蓝牙连接权限",
-                        description = "用于连接 Wear OS 手表，同步心率和运动数据。",
-                        isRequired = false
-                    )
-                )
-            }
-            // 悬浮窗权限
-            add(
-                PermissionInfo(
-                    permission = "SYSTEM_ALERT_WINDOW",
-                    title = "悬浮窗权限",
-                    description = "用于在屏幕上显示守护提醒弹窗。可以在设置中手动开启。",
-                    isRequired = false
-                )
-            )
-            // 无障碍权限
-            add(
-                PermissionInfo(
-                    permission = "ACCESSIBILITY_SERVICE",
-                    title = "无障碍权限（可选）",
-                    description = "用于采集打字节奏特征（速度、删除率、停顿时长），仅用于统计特征，不保存输入内容。",
-                    isRequired = false
-                )
-            )
-        }
-    }
-
-    // 检查每个权限的状态
-    var permissionStates by remember { mutableStateOf(mapOf<String, Boolean>()) }
-
-    LaunchedEffect(permissionsToRequest) {
-        permissionStates = permissionsToRequest.associate { permInfo ->
-            val granted = when (permInfo.permission) {
-                "SYSTEM_ALERT_WINDOW" -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        Settings.canDrawOverlays(context)
-                    } else true
-                }
-                "ACCESSIBILITY_SERVICE" -> {
-                    // 检查无障碍服务是否启用
-                    val enabledServices = android.provider.Settings.Secure.getString(
-                        context.contentResolver,
-                        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-                    )
-                    enabledServices?.contains(context.packageName) == true
-                }
-                else -> {
-                    ContextCompat.checkSelfPermission(
-                        context,
-                        permInfo.permission
-                    ) == PackageManager.PERMISSION_GRANTED
-                }
-            }
-            permInfo.permission to granted
-        }
-    }
-
     NeuroAlertDialog(
-        title = "欢迎使用 NeuroGarden",
-        confirmText = "授权必要权限",
+        title = "开始使用 NeuroGarden",
+        confirmText = "我知道了",
         dismissText = "稍后再说",
-        onConfirm = onRequestPermissions,
+        onConfirm = {
+            onRequestPermissions()
+            onDismiss()
+        },
         onDismiss = onDismiss
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "为了提供更好的守护服务，需要以下权限：",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(bottom = 16.dp)
+                text = "为了完成后台守护演示，目前只需要开启两个可用权限入口。",
+                style = MaterialTheme.typography.bodyMedium
             )
-
-            permissionsToRequest.forEach { permInfo ->
-                val isGranted = permissionStates[permInfo.permission] == true
-                PermissionCard(
-                    permissionInfo = permInfo,
-                    isGranted = isGranted
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            NeuroCard(modifier = Modifier.fillMaxWidth(), containerColor = NeuroColors.CardSoft) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "隐私说明",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "• 不保存用户输入的原始文字内容\n" +
-                                "• 不上传任何聊天记录或消息\n" +
-                                "• 只采集打字速度、删除率等统计特征\n" +
-                                "• 所有数据仅本地处理",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            PermissionActionCard(
+                title = "无障碍权限",
+                description = "用于统计打字速度、删除频率和停顿时长，不读取输入原文。",
+                action = "去开启无障碍权限",
+                onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            )
+            PermissionActionCard(
+                title = "显示在其他应用上",
+                description = "用于展示悬浮提醒、守护提示或紧急状态信息。",
+                action = "去开启显示在其他应用上",
+                onClick = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                        )
+                    }
                 }
-            }
+            )
+            Text(
+                text = "系统不会保存被动采集到的输入原文，也不提供医学诊断。",
+                style = MaterialTheme.typography.bodySmall,
+                color = NeuroColors.TextMuted
+            )
         }
     }
 }
 
 @Composable
-private fun PermissionCard(
-    permissionInfo: PermissionInfo,
-    isGranted: Boolean
+private fun PermissionActionCard(
+    title: String,
+    description: String,
+    action: String,
+    onClick: () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isGranted)
-                NeuroColors.BlueSoft
-            else
-                NeuroColors.Card
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = permissionInfo.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = permissionInfo.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Checkbox(
-                checked = isGranted,
-                onCheckedChange = null,
-                enabled = false
-            )
+    NeuroCard(modifier = Modifier.fillMaxWidth(), containerColor = NeuroColors.CardSoft) {
+        Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = NeuroColors.TextSecondary)
+            NeuroPrimaryButton(action, onClick, Modifier.fillMaxWidth())
         }
     }
 }
 
-/**
- * 权限状态检查工具
- */
 object PermissionChecker {
-
-    fun hasNotificationPermission(context: android.content.Context): Boolean {
+    fun hasNotificationPermission(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             ContextCompat.checkSelfPermission(
                 context,
@@ -239,7 +99,7 @@ object PermissionChecker {
         }
     }
 
-    fun hasBluetoothPermission(context: android.content.Context): Boolean {
+    fun hasBluetoothPermission(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ContextCompat.checkSelfPermission(
                 context,
@@ -250,36 +110,23 @@ object PermissionChecker {
         }
     }
 
-    fun hasOverlayPermission(context: android.content.Context): Boolean {
+    fun hasOverlayPermission(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            android.provider.Settings.canDrawOverlays(context)
+            Settings.canDrawOverlays(context)
         } else {
             true
         }
     }
 
-    fun hasAccessibilityPermission(context: android.content.Context): Boolean {
-        val enabledServices = android.provider.Settings.Secure.getString(
+    fun hasAccessibilityPermission(context: Context): Boolean {
+        val enabledServices = Settings.Secure.getString(
             context.contentResolver,
-            android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         )
         return enabledServices?.contains(context.packageName) == true
     }
 
-    /**
-     * 获取需要申请的权限列表
-     */
-    fun getRequiredPermissions(context: android.content.Context): List<String> {
-        val permissions = mutableListOf<String>()
-
-        if (!hasNotificationPermission(context) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-
-        if (!hasBluetoothPermission(context) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-        }
-
-        return permissions.toList()
+    fun getRequiredPermissions(context: Context): List<String> {
+        return emptyList()
     }
 }

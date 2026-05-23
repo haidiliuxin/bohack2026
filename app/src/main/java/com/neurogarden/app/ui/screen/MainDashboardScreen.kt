@@ -2,6 +2,7 @@ package com.neurogarden.app.ui.screen
 
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -36,6 +37,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -121,6 +123,31 @@ private data class MoodVisual(
     val textColor: Color
 )
 
+private data class HealthInfoDraft(
+    val name: String = "",
+    val phone: String = "",
+    val age: String = "",
+    val height: String = "",
+    val bloodType: String = "",
+    val bodyStatus: String = "",
+    val medicalHistory: String = "",
+    val emergencyName: String = "",
+    val emergencyPhone: String = "",
+    val note: String = ""
+)
+
+private data class PersonalInfoDraft(
+    val nickname: String = "林林",
+    val name: String = "林林",
+    val phone: String = "",
+    val age: String = "",
+    val gender: String = "",
+    val height: String = "",
+    val weight: String = "",
+    val bloodType: String = "",
+    val note: String = ""
+)
+
 @Composable
 fun MainDashboardScreen(
     realtime: RealtimeUiState,
@@ -171,6 +198,19 @@ fun MainDashboardScreen(
     var mindfulnessMode by remember { mutableStateOf(false) }
     var dismissedAlertEventId by remember { mutableStateOf<Long?>(null) }
     var dismissedAlertAt by remember { mutableStateOf(0L) }
+    var showGuardianHealthEditor by remember { mutableStateOf(false) }
+    var showPersonalInfoEditor by remember { mutableStateOf(false) }
+    var showPermissionPage by remember { mutableStateOf(false) }
+    var healthInfo by remember {
+        mutableStateOf(
+            HealthInfoDraft(
+                emergencyName = guardianProfile.guardianName,
+                emergencyPhone = guardianProfile.phone,
+                note = guardianProfile.emergencyNote
+            )
+        )
+    }
+    var personalInfo by remember { mutableStateOf(PersonalInfoDraft()) }
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
@@ -234,7 +274,28 @@ fun MainDashboardScreen(
                     onConnectWear = onConnectWear
                 )
 
-                MainTab.GUARDIAN -> GuardianTab(
+                MainTab.GUARDIAN -> if (showGuardianHealthEditor) {
+                    HealthInfoEditPage(
+                        info = healthInfo,
+                        onInfoChange = { healthInfo = it },
+                        onSave = {
+                            healthInfo = it
+                            onGuardianProfileChange(
+                                guardianProfile.copy(
+                                    guardianName = it.emergencyName.ifBlank { guardianProfile.guardianName },
+                                    phone = it.emergencyPhone.ifBlank { guardianProfile.phone },
+                                    emergencyNote = listOf(
+                                        it.bodyStatus.takeIf { value -> value.isNotBlank() }?.let { value -> "身体状况：$value" },
+                                        it.medicalHistory.takeIf { value -> value.isNotBlank() }?.let { value -> "既往病史：$value" },
+                                        it.note.takeIf { value -> value.isNotBlank() }?.let { value -> "备注：$value" }
+                                    ).filterNotNull().joinToString("；").ifBlank { guardianProfile.emergencyNote }
+                                )
+                            )
+                            showGuardianHealthEditor = false
+                        },
+                        onBack = { showGuardianHealthEditor = false }
+                    )
+                } else GuardianTab(
                     realtime = realtime,
                     summary = todaySummary,
                     settings = guardianSettings,
@@ -259,7 +320,9 @@ fun MainDashboardScreen(
                     },
                     onRemoteGuardianFeedback = { action ->
                         latestEvent?.let { onRemoteGuardianFeedback(it, action) }
-                    }
+                    },
+                    onOpenHealthInfo = { showGuardianHealthEditor = true },
+                    healthInfo = healthInfo
                 )
 
                 MainTab.CHAT -> ChatTab(
@@ -272,7 +335,25 @@ fun MainDashboardScreen(
                     onSendSupportReply = onSendSupportReply
                 )
 
-                MainTab.SETTINGS -> SettingsTab(
+                MainTab.SETTINGS -> when {
+                    showPersonalInfoEditor -> PersonalInfoEditPage(
+                        info = personalInfo,
+                        onInfoChange = { personalInfo = it },
+                        onSave = {
+                            personalInfo = it
+                            showPersonalInfoEditor = false
+                        },
+                        onBack = { showPersonalInfoEditor = false }
+                    )
+                    showPermissionPage -> DataPermissionPage(
+                        typingEnabled = AccessibilitySignalStore.status(LocalContext.current.applicationContext).accessibilityEnabled,
+                        overlayEnabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                            Settings.canDrawOverlays(LocalContext.current.applicationContext),
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+                        onOpenOverlaySettings = onOpenOverlaySettings,
+                        onBack = { showPermissionPage = false }
+                    )
+                    else -> SettingsTab(
                     realtime = realtime,
                     settings = guardianSettings,
                     careMode = careMode,
@@ -295,8 +376,12 @@ fun MainDashboardScreen(
                     onContinueMock = onContinueMock,
                     onClearHabitMemory = onClearHabitMemory,
                     onSeedDemoMode = onSeedDemoMode,
-                    onDebugLog = onDebugLog
+                    onDebugLog = onDebugLog,
+                    personalInfo = personalInfo,
+                    onOpenPersonalInfo = { showPersonalInfoEditor = true },
+                    onOpenPermissionPage = { showPermissionPage = true }
                 )
+                }
             }
         }
     }
@@ -805,8 +890,11 @@ private fun GuardianTab(
     onFeedback: (String) -> Unit,
     onSimulateGuardianNotification: () -> Unit,
     onSendGuardianSms: () -> Unit,
-    onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit
+    onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit,
+    onOpenHealthInfo: () -> Unit,
+    healthInfo: HealthInfoDraft
 ) {
+    val context = LocalContext.current
     var emotionSensitivity by remember { mutableFloatStateOf(0.60f) }
     var bodySensitivity by remember { mutableFloatStateOf(0.50f) }
     var typingSensitivity by remember { mutableFloatStateOf(0.70f) }
@@ -880,43 +968,66 @@ private fun GuardianTab(
         NeuroListRow(
             title = "紧急联系人",
             subtitle = "${profile.guardianName.ifBlank { settings.name }} · ${profile.relationship.ifBlank { settings.relation }} · ${profile.authorizationStatus.displayName}",
-            leading = { SmallStatusDot(NeuroColors.Coral) }
+            leading = { SmallStatusDot(NeuroColors.Coral) },
+            trailing = { Text("编辑", color = NeuroColors.Blue) },
+            modifier = Modifier.clickable { onOpenHealthInfo() }
         )
         NeuroListRow(
-            title = "个人简洁病例",
-            subtitle = if (profile.emergencyNote.isBlank()) "暂无补充说明，可在正式资料页完善" else profile.emergencyNote,
-            leading = { SmallStatusDot(NeuroColors.Blue) }
+            title = "个人简介 / 病例信息",
+            subtitle = healthInfo.bodyStatus.ifBlank {
+                healthInfo.medicalHistory.ifBlank {
+                    profile.emergencyNote.ifBlank { "点击补充基础健康信息" }
+                }
+            },
+            leading = { SmallStatusDot(NeuroColors.Blue) },
+            trailing = { Text("编辑", color = NeuroColors.Blue) },
+            modifier = Modifier.clickable { onOpenHealthInfo() }
         )
 
         if (latestEvent != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 NeuroSecondaryButton(
                     text = "模拟通知",
-                    onClick = onSimulateGuardianNotification,
+                    onClick = {
+                        onSimulateGuardianNotification()
+                        Toast.makeText(context, "模拟通知已发送", Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.weight(1f)
                 )
                 NeuroSecondaryButton(
                     text = "短信通知",
-                    onClick = onSendGuardianSms,
+                    onClick = {
+                        onSendGuardianSms()
+                        Toast.makeText(context, "已打开短信通知草稿", Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.weight(1f)
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 NeuroSecondaryButton(
                     text = "我还好",
-                    onClick = { onFeedback("我还好") },
+                    onClick = {
+                        onFeedback("我还好")
+                        Toast.makeText(context, "已记录：我还好", Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.weight(1f)
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 NeuroSecondaryButton(
                     text = "继续观察",
-                    onClick = { onRemoteGuardianFeedback(GuardianFeedbackAction.KEEP_WATCHING) },
+                    onClick = {
+                        onRemoteGuardianFeedback(GuardianFeedbackAction.KEEP_WATCHING)
+                        Toast.makeText(context, "已继续观察", Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.weight(1f)
                 )
                 NeuroSecondaryButton(
                     text = "标记误报",
-                    onClick = { onRemoteGuardianFeedback(GuardianFeedbackAction.FALSE_POSITIVE) },
+                    onClick = {
+                        onRemoteGuardianFeedback(GuardianFeedbackAction.FALSE_POSITIVE)
+                        Toast.makeText(context, "已标记为误报", Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -1123,7 +1234,7 @@ private fun ParticleSphere(
     Canvas(modifier = Modifier.size(size)) {
         val center = Offset(this.size.width / 2f, this.size.height / 2f)
         val radius = this.size.minDimension * 0.36f * breath
-        val count = if (mindfulness) 380 else 300
+        val count = if (mindfulness) 720 else 560
         val golden = PI * (3.0 - kotlin.math.sqrt(5.0))
         repeat(count) { index ->
             val k = index + 0.5
@@ -1135,14 +1246,21 @@ private fun ParticleSphere(
             val perspective = 0.72 + 0.28 * ((z3 + 1.0) / 2.0)
             val x = center.x + (x3 * radius * perspective).toFloat()
             val y = center.y + (y3 * radius * perspective).toFloat()
-            val alpha = (0.18 + 0.58 * ((z3 + 1.0) / 2.0)).toFloat()
+            val alpha = (0.10 + 0.46 * ((z3 + 1.0) / 2.0)).toFloat()
             drawCircle(
                 color = baseColor.copy(alpha = alpha),
-                radius = (1.35f + 1.4f * perspective.toFloat()) * if (mindfulness) 1.12f else 1f,
+                radius = (0.85f + 1.15f * perspective.toFloat()) * if (mindfulness) 1.06f else 1f,
                 center = Offset(x, y)
             )
         }
-        drawCircle(baseColor.copy(alpha = 0.08f), radius * 1.08f, center)
+        repeat(3) { ring ->
+            drawCircle(
+                color = baseColor.copy(alpha = 0.10f - ring * 0.025f),
+                radius = radius * (0.92f + ring * 0.18f),
+                center = center,
+                style = Stroke(width = 1.2f + ring)
+            )
+        }
     }
 }
 
@@ -1278,7 +1396,10 @@ private fun SettingsTab(
     onContinueMock: () -> Unit,
     onClearHabitMemory: () -> Unit,
     onSeedDemoMode: (String) -> Unit,
-    onDebugLog: () -> Unit
+    onDebugLog: () -> Unit,
+    personalInfo: PersonalInfoDraft,
+    onOpenPersonalInfo: () -> Unit,
+    onOpenPermissionPage: () -> Unit
 ) {
     val context = LocalContext.current
     val typingStatus = AccessibilitySignalStore.status(context.applicationContext)
@@ -1294,7 +1415,7 @@ private fun SettingsTab(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("设置", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+        NeuroCard(modifier = Modifier.fillMaxWidth().clickable { onOpenPersonalInfo() }) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Box(
                     modifier = Modifier
@@ -1303,14 +1424,14 @@ private fun SettingsTab(
                         .background(Brush.linearGradient(listOf(Color(0xFFE6F4FF), Color(0xFFFFE8EF)))),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("林", color = NeuroColors.Blue, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text(personalInfo.nickname.take(1).ifBlank { "N" }, color = NeuroColors.Blue, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("林林", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("UID  NG-2048-0913", color = NeuroColors.TextSecondary)
+                    Text(personalInfo.nickname.ifBlank { personalInfo.name.ifBlank { "未填写昵称" } }, color = NeuroColors.TextPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("${personalInfo.name.ifBlank { "未填写姓名" }} · ${personalInfo.phone.ifBlank { "未填写手机号" }}", color = NeuroColors.TextSecondary)
                     Text(wearConnectionStatus, color = if (wearConnectionStatus.contains("连接")) NeuroColors.Mint else NeuroColors.TextMuted, style = MaterialTheme.typography.bodySmall)
                 }
-                Text("›", color = NeuroColors.TextMuted, style = MaterialTheme.typography.headlineMedium)
+                Text("编辑", color = NeuroColors.Blue, style = MaterialTheme.typography.labelMedium)
             }
         }
 
@@ -1332,7 +1453,9 @@ private fun SettingsTab(
         NeuroListRow(
             title = "数据与权限",
             subtitle = "输入节奏 ${if (typingStatus.accessibilityEnabled) "已开启" else "未开启"} · 悬浮窗 ${if (overlayEnabled) "已开启" else "未开启"}",
-            leading = { SmallStatusDot(NeuroColors.Blue) }
+            leading = { SmallStatusDot(NeuroColors.Blue) },
+            trailing = { Text("进入", color = NeuroColors.Blue) },
+            modifier = Modifier.clickable { onOpenPermissionPage() }
         )
         NeuroListRow(
             title = "开发者调试",
@@ -1397,6 +1520,141 @@ private fun SettingsTab(
             )
         }
     }
+}
+
+@Composable
+private fun HealthInfoEditPage(
+    info: HealthInfoDraft,
+    onInfoChange: (HealthInfoDraft) -> Unit,
+    onSave: (HealthInfoDraft) -> Unit,
+    onBack: () -> Unit
+) {
+    var draft by remember(info) { mutableStateOf(info) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = 106.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("个人健康信息", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+            EditField("姓名", draft.name) { draft = draft.copy(name = it); onInfoChange(draft) }
+            EditField("手机号码", draft.phone) { draft = draft.copy(phone = it); onInfoChange(draft) }
+            EditField("年龄", draft.age) { draft = draft.copy(age = it); onInfoChange(draft) }
+            EditField("身高", draft.height) { draft = draft.copy(height = it); onInfoChange(draft) }
+            EditField("血型", draft.bloodType) { draft = draft.copy(bloodType = it); onInfoChange(draft) }
+            EditField("身体状况", draft.bodyStatus) { draft = draft.copy(bodyStatus = it); onInfoChange(draft) }
+            EditField("既往病史", draft.medicalHistory) { draft = draft.copy(medicalHistory = it); onInfoChange(draft) }
+            EditField("紧急联系人姓名", draft.emergencyName) { draft = draft.copy(emergencyName = it); onInfoChange(draft) }
+            EditField("紧急联系人电话", draft.emergencyPhone) { draft = draft.copy(emergencyPhone = it); onInfoChange(draft) }
+            EditField("备注", draft.note) { draft = draft.copy(note = it); onInfoChange(draft) }
+        }
+        NeuroPrimaryButton("保存", { onSave(draft) }, Modifier.fillMaxWidth())
+        NeuroSecondaryButton("返回", onBack, Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun PersonalInfoEditPage(
+    info: PersonalInfoDraft,
+    onInfoChange: (PersonalInfoDraft) -> Unit,
+    onSave: (PersonalInfoDraft) -> Unit,
+    onBack: () -> Unit
+) {
+    var draft by remember(info) { mutableStateOf(info) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = 106.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("个人信息", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        NeuroCard(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(Color(0xFFE6F4FF), Color(0xFFFFE8EF)))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(draft.nickname.take(1).ifBlank { "N" }, color = NeuroColors.Blue, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            }
+            EditField("昵称", draft.nickname) { draft = draft.copy(nickname = it); onInfoChange(draft) }
+            EditField("姓名", draft.name) { draft = draft.copy(name = it); onInfoChange(draft) }
+            EditField("手机号", draft.phone) { draft = draft.copy(phone = it); onInfoChange(draft) }
+            EditField("年龄", draft.age) { draft = draft.copy(age = it); onInfoChange(draft) }
+            EditField("性别", draft.gender) { draft = draft.copy(gender = it); onInfoChange(draft) }
+            EditField("身高", draft.height) { draft = draft.copy(height = it); onInfoChange(draft) }
+            EditField("体重", draft.weight) { draft = draft.copy(weight = it); onInfoChange(draft) }
+            EditField("血型", draft.bloodType) { draft = draft.copy(bloodType = it); onInfoChange(draft) }
+            EditField("备注", draft.note) { draft = draft.copy(note = it); onInfoChange(draft) }
+        }
+        NeuroPrimaryButton("保存", { onSave(draft) }, Modifier.fillMaxWidth())
+        NeuroSecondaryButton("返回", onBack, Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun DataPermissionPage(
+    typingEnabled: Boolean,
+    overlayEnabled: Boolean,
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = 106.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text("数据与权限", color = NeuroColors.TextPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        PermissionEntryCard(
+            title = "无障碍权限",
+            status = if (typingEnabled) "已开启" else "未开启",
+            description = "用于统计打字速度、删除频率和停顿时长，不读取输入原文。",
+            button = "去开启",
+            onClick = onOpenAccessibilitySettings
+        )
+        PermissionEntryCard(
+            title = "显示在其他应用上",
+            status = if (overlayEnabled) "已开启" else "未开启",
+            description = "用于展示悬浮提醒、守护提示或紧急状态信息。",
+            button = "去开启",
+            onClick = onOpenOverlaySettings
+        )
+        Text("NeuroGarden 仅保存结构化统计特征，不保存输入原文，也不提供医学诊断。", color = NeuroColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        NeuroSecondaryButton("返回", onBack, Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun PermissionEntryCard(
+    title: String,
+    status: String,
+    description: String,
+    button: String,
+    onClick: () -> Unit
+) {
+    NeuroCard(modifier = Modifier.fillMaxWidth()) {
+        Text("$title：$status", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+        Text(description, color = NeuroColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        NeuroPrimaryButton(button, onClick, Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun EditField(label: String, value: String, onValueChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = label !in listOf("身体状况", "既往病史", "备注")
+    )
 }
 
 @Composable
