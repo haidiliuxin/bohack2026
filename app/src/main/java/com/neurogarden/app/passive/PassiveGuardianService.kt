@@ -1,4 +1,4 @@
-package com.neurogarden.app.passive
+﻿package com.neurogarden.app.passive
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -43,6 +43,7 @@ class PassiveGuardianService : Service() {
     private var monitorJob: Job? = null
     private var elevatedTicks = 0
     private var combinedAlertTicks = 0
+    private var lastImmediateEvaluationAt = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -51,7 +52,16 @@ class PassiveGuardianService : Service() {
         monitorJob = scope.launch { monitorLoop() }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_EVALUATE_NOW) {
+            val now = System.currentTimeMillis()
+            if (now - lastImmediateEvaluationAt >= IMMEDIATE_EVALUATION_COOLDOWN_MS) {
+                lastImmediateEvaluationAt = now
+                scope.launch { runCatching { collectAndEvaluate() } }
+            }
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         monitorJob?.cancel()
@@ -182,14 +192,14 @@ class PassiveGuardianService : Service() {
                 motionLevel = watchPacket?.motionLevel ?: 0f,
                 physiologyRisk = physiologyRisk,
                 combinedRisk = combinedRisk,
-                alertAllowed = combinedAlert != null && quality.qualityLevel != "low",
+                alertAllowed = combinedAlert != null,
                 dataQualityLevel = quality.qualityLevel,
                 lastAppCategory = appCategory,
                 lastReason = reason
             )
         )
 
-        if (combinedAlert != null && quality.qualityLevel != "low") {
+        if (combinedAlert != null) {
             PendingPassiveAlertStore.save(
                 context = this,
                 title = notificationPlan.title,
@@ -255,8 +265,8 @@ class PassiveGuardianService : Service() {
         interactionRisk: Float,
         physiologyRisk: Float
     ): String? {
-        if (packet == null) return null
-        if (packet.motionLevel >= 0.60f) return null
+        if (packet == null) return "未满足：没有真实手表数据，也没有开启模拟手表数据。"
+        if (packet.motionLevel >= 0.60f) return "未满足：运动干扰过高，避免误报。"
         if (interactionRisk < 0.40f || physiologyRisk < 0.35f) return null
 
         val typingReasons = buildList {
@@ -265,6 +275,7 @@ class PassiveGuardianService : Service() {
             if (signal.pauseDuration >= 12f && signal.typingSpeed > 0f) add("输入后停顿较久")
             if (interactionRisk >= 0.55f) add("输入节奏偏离")
         }.distinct()
+        if (typingReasons.isEmpty()) return null
         val watchReasons = buildList {
             if (packet.heartRate >= 92) add("心率偏高")
             if (packet.breathRate >= 19) add("呼吸偏快")
@@ -287,10 +298,10 @@ class PassiveGuardianService : Service() {
         if (packet == null) return "未满足：没有真实手表数据，也没有开启模拟手表数据。"
         if (packet.motionLevel >= 0.60f) return "未满足：运动干扰过高，避免误报。"
         if (interactionRisk < 0.40f) {
-            return "未满足：输入节奏风险不足。typed=${"%.1f".format(signal.typingSpeed)}, delete=${"%.2f".format(signal.deleteRate)}, pause=${"%.1f".format(signal.pauseDuration)}"
+        return "未满足：输入和生理信号没有同时达到提醒条件。"
         }
         if (physiologyRisk < 0.35f) {
-            return "未满足：心率/呼吸风险不足。heart=${packet.heartRate}, breath=${packet.breathRate}"
+        return "未满足：输入和生理信号没有同时达到提醒条件。"
         }
         return "未满足：输入和生理信号没有同时达到提醒条件。"
     }
@@ -410,6 +421,19 @@ class PassiveGuardianService : Service() {
         private const val CHANNEL_ID = "combined_state_alerts"
         private const val ONGOING_NOTIFICATION_ID = 1001
         private const val SUPPORT_NOTIFICATION_ID = 1002
+        private const val ACTION_EVALUATE_NOW = "com.neurogarden.app.passive.EVALUATE_NOW"
+        private const val IMMEDIATE_EVALUATION_COOLDOWN_MS = 2_000L
+
+        fun requestImmediateEvaluation(context: Context) {
+            val intent = Intent(context, PassiveGuardianService::class.java).apply {
+                action = ACTION_EVALUATE_NOW
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
 
         fun start(context: Context) {
             val intent = Intent(context, PassiveGuardianService::class.java)

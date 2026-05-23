@@ -5,6 +5,7 @@ import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.NodeClient
 import com.google.android.gms.wearable.Wearable
 import com.neurogarden.shared.wear.WearPaths
+import org.json.JSONObject
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -49,8 +50,33 @@ class WearCommandSender(context: Context) {
         )
     }
 
-    fun sendBreathPattern(inhaleSeconds: Int, exhaleSeconds: Int, pattern: String) {
-        // Reserved for breath guidance commands.
+    suspend fun sendBreathPattern(inhaleSeconds: Int, exhaleSeconds: Int, pattern: String): WearConnectionResult {
+        val nodes = runCatching { connectedNodes() }.getOrElse {
+            return WearConnectionResult(false, 0, "无法读取手表连接状态，请检查蓝牙和附近设备权限。")
+        }
+        if (nodes.isEmpty()) {
+            return WearConnectionResult(false, 0, "没有发现已连接的 Wear OS 手表。")
+        }
+        val payload = JSONObject()
+            .put("type", "breath_pattern")
+            .put("inhaleSeconds", inhaleSeconds)
+            .put("exhaleSeconds", exhaleSeconds)
+            .put("pattern", pattern)
+            .toString()
+            .toByteArray()
+        var sent = 0
+        nodes.forEach { node ->
+            if (sendMessage(node.id, WearPaths.BREATH_PATTERN, payload)) sent += 1
+        }
+        return WearConnectionResult(
+            connected = sent > 0,
+            nodeCount = nodes.size,
+            message = if (sent > 0) {
+                "已向 $sent 台手表发送呼吸节奏：${inhaleSeconds}s / ${exhaleSeconds}s。"
+            } else {
+                "发现手表，但呼吸节奏发送失败，请打开手表端 NeuroGarden 后重试。"
+            }
+        )
     }
 
     private suspend fun connectedNodes() = suspendCoroutine { continuation ->
@@ -61,6 +87,12 @@ class WearCommandSender(context: Context) {
 
     private suspend fun sendStartMessage(nodeId: String): Boolean = suspendCoroutine { continuation ->
         messageClient.sendMessage(nodeId, WearPaths.START_MONITORING, ByteArray(0))
+            .addOnSuccessListener { continuation.resume(true) }
+            .addOnFailureListener { continuation.resume(false) }
+    }
+
+    private suspend fun sendMessage(nodeId: String, path: String, payload: ByteArray): Boolean = suspendCoroutine { continuation ->
+        messageClient.sendMessage(nodeId, path, payload)
             .addOnSuccessListener { continuation.resume(true) }
             .addOnFailureListener { continuation.resume(false) }
     }

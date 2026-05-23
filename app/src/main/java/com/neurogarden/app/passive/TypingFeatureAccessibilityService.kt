@@ -2,9 +2,14 @@ package com.neurogarden.app.passive
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 
 class TypingFeatureAccessibilityService : AccessibilityService() {
+    private val handler = Handler(Looper.getMainLooper())
+    private var evaluateRunnable: Runnable? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         serviceInfo = serviceInfo?.apply {
@@ -38,10 +43,22 @@ class TypingFeatureAccessibilityService : AccessibilityService() {
                 eventTime = now,
                 packageName = packageName
             )
+            scheduleImmediateEvaluation()
         }
     }
 
-    override fun onInterrupt() = Unit
+    override fun onInterrupt() {
+        evaluateRunnable?.let { handler.removeCallbacks(it) }
+        evaluateRunnable = null
+    }
+
+    private fun scheduleImmediateEvaluation() {
+        evaluateRunnable?.let { handler.removeCallbacks(it) }
+        evaluateRunnable = Runnable {
+            PassiveGuardianService.requestImmediateEvaluation(this)
+        }
+        handler.postDelayed(evaluateRunnable!!, 1_500L)
+    }
 
     private fun fallbackDelta(event: AccessibilityEvent): Int {
         val beforeLength = event.beforeText?.length ?: 0

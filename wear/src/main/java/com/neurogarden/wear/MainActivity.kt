@@ -10,11 +10,17 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Wearable
+import com.neurogarden.shared.wear.WearPaths
+import com.neurogarden.wear.data.PhoneCommandReceiver
 import com.neurogarden.wear.data.PhoneDataSender
 import com.neurogarden.wear.haptic.BreathHapticController
 import com.neurogarden.wear.health.HeartRateClient
@@ -26,13 +32,15 @@ import com.neurogarden.wear.ui.WatchRiskState
 import com.neurogarden.wear.ui.WatchVitalUiState
 import com.neurogarden.wear.ui.WearBreathingScreen
 import com.neurogarden.wear.ui.WearHomeScreen
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
     private lateinit var heartRateClient: HeartRateClient
     private val mockHeartRateClient = MockHeartRateClient()
     private lateinit var phoneDataSender: PhoneDataSender
     private lateinit var hapticController: BreathHapticController
+    private val commandEvents = MutableSharedFlow<WearCommand>(extraBufferCapacity = 8)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,10 +51,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             var activeHeartRateClient by remember { mutableStateOf(heartRateClient) }
             var showingBreathing by remember { mutableStateOf(false) }
-            var manualRefreshTick by remember { mutableStateOf(0) }
+            var manualRefreshTick by remember { mutableIntStateOf(0) }
+            var inhaleSeconds by remember { mutableIntStateOf(4) }
+            var exhaleSeconds by remember { mutableIntStateOf(6) }
             var vitalState by remember { mutableStateOf(WatchVitalUiState()) }
             val heartRate by activeHeartRateClient.heartRateFlow.collectAsState(initial = 86)
-            val status by activeHeartRateClient.statusFlow.collectAsState(initial = "Mock")
+            val status by activeHeartRateClient.statusFlow.collectAsState(initial = "Mock 心率")
 
             LaunchedEffect(activeHeartRateClient) {
                 activeHeartRateClient.start()
@@ -60,19 +70,37 @@ class MainActivity : ComponentActivity() {
                     status = status
                 )
             }
+            LaunchedEffect(Unit) {
+                commandEvents.collect { command ->
+                    when (command) {
+                        WearCommand.StartMonitoring -> {
+                            manualRefreshTick += 1
+                            vitalState = vitalState.copy(lastCommandText = "手机请求开始监测")
+                        }
+                        is WearCommand.BreathPattern -> {
+                            inhaleSeconds = command.inhaleSeconds
+                            exhaleSeconds = command.exhaleSeconds
+                            vitalState = vitalState.copy(
+                                lastCommandText = "收到手机呼吸节奏 ${command.inhaleSeconds}s/${command.exhaleSeconds}s"
+                            )
+                            showingBreathing = true
+                        }
+                    }
+                }
+            }
 
             BackHandler(enabled = showingBreathing) {
                 showingBreathing = false
             }
 
             if (showingBreathing) {
-                DisposableEffect(Unit) {
-                    hapticController.startPattern(inhaleSeconds = 4, exhaleSeconds = 6)
+                DisposableEffect(inhaleSeconds, exhaleSeconds) {
+                    hapticController.startPattern(inhaleSeconds, exhaleSeconds)
                     onDispose { hapticController.stop() }
                 }
                 WearBreathingScreen(
-                    inhaleSeconds = 4,
-                    exhaleSeconds = 6,
+                    inhaleSeconds = inhaleSeconds,
+                    exhaleSeconds = exhaleSeconds,
                     onBack = { showingBreathing = false }
                 )
             } else {
@@ -86,13 +114,6 @@ class MainActivity : ComponentActivity() {
                                 heartRateClient = activeHeartRateClient
                             } else {
                                 manualRefreshTick += 1
-                                vitalState = buildVitalState(
-                                    heartRate = heartRate,
-                                    tick = manualRefreshTick,
-                                    last = vitalState,
-                                    realSource = activeHeartRateClient !is MockHeartRateClient,
-                                    status = status
-                                )
                             }
                         }
                     },
@@ -106,7 +127,8 @@ class MainActivity : ComponentActivity() {
                             vitalState = vitalState.copy(
                                 phoneConnected = sent,
                                 lastSyncTime = if (sent) System.currentTimeMillis() else vitalState.lastSyncTime,
-                                dataQuality = if (sent) WatchDataQuality.HIGH else vitalState.dataQuality
+                                dataQuality = if (sent) WatchDataQuality.HIGH else vitalState.dataQuality,
+                                lastCommandText = if (sent) "已同步手机" else "同步失败，请检查配对"
                             )
                         }
                     },
@@ -116,20 +138,44 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        Wearable.getMessageClient(this).addListener(this)
+    }
+
+    override fun onPause() {
+        Wearable.getMessageClient(this).removeListener(this)
+        super.onPause()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         lifecycleScope.launch { heartRateClient.stop() }
         hapticController.stop()
     }
 
-    private fun createHeartRateClient(): HeartRateClient {
-        return if (hasBodySensorPermission()) {
+    override fun onMessageReceived(event: MessageEvent) {
+        when (event.path) {
+            WearPaths.START_MONITORING -> commandEvents.tryEmit(WearCommand.StartMonitoring)
+            WearPaths.BREATH_PATTERN -> {
+                val command = PhoneCommandReceiver.parseBreathPattern(event.data) ?: return
+                commandEvents.tryEmit(
+                    WearCommand.BreathPattern(
+                        inhaleSeconds = command.inhaleSeconds,
+                        exhaleSeconds = command.exhaleSeconds
+                    )
+                )
+            }
+        }
+    }
+
+    private fun createHeartRateClient(): HeartRateClient =
+        if (hasBodySensorPermission()) {
             RealHeartRateClient(this)
         } else {
             requestPermissions(arrayOf(Manifest.permission.BODY_SENSORS), BODY_SENSOR_REQUEST)
             mockHeartRateClient
         }
-    }
 
     private fun hasBodySensorPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) ==
@@ -156,7 +202,7 @@ class MainActivity : ComponentActivity() {
             breathRate = breathRate,
             motionLevel = motionLevel,
             riskState = riskState,
-            emotionLabel = emotionLabelFor(riskState, safeHeartRate, breathRate, motionLevel, tick),
+            statusLabel = statusLabelFor(riskState, safeHeartRate, breathRate, motionLevel, tick),
             confidence = confidenceFor(riskState, motionLevel, realSource),
             dataQuality = dataQualityFor(tick, last.phoneConnected, realSource),
             dataSource = if (realSource) WatchDataSource.REAL else WatchDataSource.MOCK,
@@ -189,7 +235,7 @@ class MainActivity : ComponentActivity() {
     private fun estimatedBreathRate(heartRate: Int): Int =
         12 + ((heartRate - 72).coerceAtLeast(0) / 5)
 
-    private fun emotionLabelFor(
+    private fun statusLabelFor(
         state: WatchRiskState,
         heartRate: Int,
         breathRate: Int,
@@ -199,7 +245,7 @@ class MainActivity : ComponentActivity() {
         when (state) {
             WatchRiskState.STABLE -> if (motionLevel < 0.18f) "稳定" else "专注"
             WatchRiskState.OBSERVE -> if (tick % 2 == 0) "轻度波动" else "疲惫"
-            WatchRiskState.ALERT -> if (heartRate >= 108 || breathRate >= 22) "压力偏高" else "紧张"
+            WatchRiskState.ALERT -> if (heartRate >= 108 || breathRate >= 22) "节律偏高" else "紧张"
         }
 
     private fun confidenceFor(state: WatchRiskState, motionLevel: Float, realSource: Boolean): Float {
@@ -234,6 +280,11 @@ class MainActivity : ComponentActivity() {
             state == WatchRiskState.OBSERVE -> "只提示状态偏离"
             else -> "不是医学诊断"
         }
+
+    private sealed interface WearCommand {
+        data object StartMonitoring : WearCommand
+        data class BreathPattern(val inhaleSeconds: Int, val exhaleSeconds: Int) : WearCommand
+    }
 
     companion object {
         private const val BODY_SENSOR_REQUEST = 4101

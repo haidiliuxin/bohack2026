@@ -49,6 +49,16 @@ import com.neurogarden.app.data.local.EmotionEvaluationRecordEntity
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
+import com.neurogarden.app.guardian.CareLoopRecord
+import com.neurogarden.app.guardian.CareLoopStatus
+import com.neurogarden.app.guardian.GuardianAuthorizationStatus
+import com.neurogarden.app.guardian.GuardianFeedbackAction
+import com.neurogarden.app.guardian.GuardianFeedbackRecord
+import com.neurogarden.app.guardian.GuardianNotificationChannel
+import com.neurogarden.app.guardian.GuardianNotificationRecord
+import com.neurogarden.app.guardian.GuardianSettingsSnapshot
+import com.neurogarden.app.guardian.SpecialCareDeviationResult
+import com.neurogarden.app.guardian.SpecialCareService
 import com.neurogarden.app.passive.AccessibilitySignalStore
 import com.neurogarden.app.passive.NotificationPolicyStore
 import com.neurogarden.app.viewmodel.DashboardChartData
@@ -84,29 +94,45 @@ fun MainDashboardScreen(
     emotionEvaluations: List<EmotionEvaluationRecordEntity>,
     thresholdProfiles: List<ThresholdProfileEntity>,
     guardianSettings: GuardianSettings,
+    guardianProfile: GuardianSettingsSnapshot,
+    guardianNotificationRecords: List<GuardianNotificationRecord>,
+    guardianFeedbackRecords: List<GuardianFeedbackRecord>,
+    careLoopRecords: List<CareLoopRecord>,
     onGuardianSettingsChange: (GuardianSettings) -> Unit,
+    onGuardianProfileChange: (GuardianSettingsSnapshot) -> Unit,
     onStartPassiveGuardian: () -> Unit,
     onStopPassiveGuardian: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
     onConnectWear: () -> Unit,
+    onSendWearBreathPattern: () -> Unit,
     onContinueMock: () -> Unit,
     onFeedback: (String) -> Unit,
     onBeginSupportConversation: () -> Unit,
     onSendSupportReply: (String) -> Unit,
     onEventFeedback: (Long, String) -> Unit,
+    onSimulateGuardianNotification: (RiskEventEntity) -> Unit,
+    onRemoteGuardianFeedback: (RiskEventEntity, GuardianFeedbackAction) -> Unit,
     observeRiskEventById: (Long) -> Flow<RiskEventEntity?>,
     onClearHabitMemory: () -> Unit,
     onSeedDemoMode: (String) -> Unit,
     onCareModeChange: (CareMode) -> Unit,
     onDismissIntegrationDemoAlert: () -> Unit,
-    onDebugLog: () -> Unit
+    onDebugLog: () -> Unit,
+    openChatRequest: Int = 0
 ) {
     var tab by remember { mutableStateOf(MainTab.TODAY) }
     var selectedEventId by remember { mutableStateOf<Long?>(null) }
     var dismissedAlertEventId by remember { mutableStateOf<Long?>(null) }
     var dismissedAlertAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(openChatRequest) {
+        if (openChatRequest > 0) {
+            selectedEventId = null
+            onBeginSupportConversation()
+            tab = MainTab.CHAT
+        }
+    }
     val selectedEventState = selectedEventId?.let { id ->
         observeRiskEventById(id).collectAsState(initial = null)
     }
@@ -149,9 +175,15 @@ fun MainDashboardScreen(
                     event = selectedEvent,
                     careMode = careMode,
                     dataQualityLevel = todaySummary.dataQualityLevel,
+                    recentEvents = recentRiskEvents,
+                    guardianNotificationRecords = guardianNotificationRecords,
+                    guardianFeedbackRecords = guardianFeedbackRecords,
+                    careLoopRecords = careLoopRecords,
                     feedbackTuningMessage = realtime.guardianFeedbackTuningMessage,
                     onBack = { selectedEventId = null },
-                    onFeedback = { feedback -> onEventFeedback(selectedEvent.id, feedback) }
+                    onFeedback = { feedback -> onEventFeedback(selectedEvent.id, feedback) },
+                    onSimulateGuardianNotification = { onSimulateGuardianNotification(selectedEvent) },
+                    onRemoteGuardianFeedback = { action -> onRemoteGuardianFeedback(selectedEvent, action) }
                 )
             } else {
                 when (tab) {
@@ -176,15 +208,21 @@ fun MainDashboardScreen(
                         realtime = realtime,
                         todaySummary = todaySummary,
                         settings = guardianSettings,
+                        guardianProfile = guardianProfile,
+                        notificationRecords = guardianNotificationRecords,
+                        guardianFeedbackRecords = guardianFeedbackRecords,
                         careMode = careMode,
                         policy = careModePolicy,
                         latestEvent = latestEvent,
                         onSettingsChange = onGuardianSettingsChange,
+                        onGuardianProfileChange = onGuardianProfileChange,
                         onStartPassiveGuardian = onStartPassiveGuardian,
                         onStopPassiveGuardian = onStopPassiveGuardian,
                         onFeedback = { feedback ->
                             latestEvent?.let { onEventFeedback(it.id, feedback) } ?: onFeedback(feedback)
-                        }
+                        },
+                        onSimulateGuardianNotification = { latestEvent?.let(onSimulateGuardianNotification) },
+                        onRemoteGuardianFeedback = { action -> latestEvent?.let { onRemoteGuardianFeedback(it, action) } }
                     )
 
                     MainTab.CHAT -> SupportChatScreen(
@@ -210,6 +248,7 @@ fun MainDashboardScreen(
                         onOpenBluetoothSettings = onOpenBluetoothSettings,
                         onOpenOverlaySettings = onOpenOverlaySettings,
                         onConnectWear = onConnectWear,
+                        onSendWearBreathPattern = onSendWearBreathPattern,
                         onClearHabitMemory = onClearHabitMemory,
                         onSeedDemoMode = onSeedDemoMode,
                         onDebugLog = onDebugLog
@@ -514,10 +553,20 @@ private fun EventDetailScreen(
     event: RiskEventEntity,
     careMode: CareMode,
     dataQualityLevel: String,
+    recentEvents: List<RiskEventEntity>,
+    guardianNotificationRecords: List<GuardianNotificationRecord>,
+    guardianFeedbackRecords: List<GuardianFeedbackRecord>,
+    careLoopRecords: List<CareLoopRecord>,
     feedbackTuningMessage: String?,
     onBack: () -> Unit,
-    onFeedback: (String) -> Unit
+    onFeedback: (String) -> Unit,
+    onSimulateGuardianNotification: () -> Unit,
+    onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit
 ) {
+    val eventNotifications = guardianNotificationRecords.filter { it.eventId == event.id }
+    val eventGuardianFeedback = guardianFeedbackRecords.filter { it.eventId == event.id }
+    val deviation = SpecialCareService.getSpecialCareDeviationLevel(event, recentEvents, guardianFeedbackRecords)
+    val loop = careLoopRecords.firstOrNull { it.eventId == event.id }
     val discomfort = DiscomfortBoundaryCalculator.assessEvent(
         mode = careMode,
         riskScore = event.riskScore,
@@ -575,6 +624,20 @@ private fun EventDetailScreen(
                 Text(discomfort.explanation)
             }
         }
+        SpecialCareDeviationCard(
+            deviation = deviation,
+            loop = loop,
+            careMode = careMode
+        )
+        GuardianNotificationDetailCard(
+            notifications = eventNotifications,
+            onSimulateGuardianNotification = onSimulateGuardianNotification
+        )
+        GuardianRemoteFeedbackPanel(
+            records = eventGuardianFeedback,
+            currentFeedback = event.guardianFeedback,
+            onFeedback = onRemoteGuardianFeedback
+        )
         GuardianFeedbackButtons(
             currentFeedback = event.guardianFeedback,
             onFeedback = onFeedback
@@ -609,6 +672,94 @@ private fun GuardianFeedbackButtons(
                         Text(if (currentFeedback == action) "$action（已选择）" else action)
                     }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpecialCareDeviationCard(
+    deviation: SpecialCareDeviationResult,
+    loop: CareLoopRecord?,
+    careMode: CareMode
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("照护闭环", style = MaterialTheme.typography.titleMedium)
+            Text("特殊关怀判断：${if (careMode == CareMode.SPECIAL_CARE) "已启用" else "可作为守护参考"}")
+            Text("状态偏离等级：${deviation.displayText}")
+            Text("系统建议：${deviation.recommendedAction}")
+            Text("建议通知照护者：${if (deviation.notifyGuardianRecommended) "是" else "否"}")
+            Text("闭环状态：${loop?.status?.displayName ?: CareLoopStatus.OPEN.displayName}")
+            deviation.reasons.forEach { Text("· $it") }
+            Text("说明：这是状态偏离分级，不是医学诊断。")
+        }
+    }
+}
+
+@Composable
+private fun GuardianNotificationDetailCard(
+    notifications: List<GuardianNotificationRecord>,
+    onSimulateGuardianNotification: () -> Unit
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("监护人通知", style = MaterialTheme.typography.titleMedium)
+            Text("当前为模拟通知，不会真实发送短信、微信或邮件。")
+            Button(onClick = onSimulateGuardianNotification, modifier = Modifier.fillMaxWidth()) {
+                Text("模拟通知监护人")
+            }
+            if (notifications.isEmpty()) {
+                Text("暂无通知记录。")
+            } else {
+                notifications.take(5).forEach { record ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("${record.sentAt.toReadableTime()} · ${record.status.displayName}")
+                            Text("渠道：${record.channels.joinToString("、") { it.displayName }}")
+                            Text("原因：${record.reason}")
+                            Text("策略：${record.strategyTags.joinToString("、")}")
+                            Text("摘要：${record.messagePreview}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GuardianRemoteFeedbackPanel(
+    records: List<GuardianFeedbackRecord>,
+    currentFeedback: String?,
+    onFeedback: (GuardianFeedbackAction) -> Unit
+) {
+    val actions = listOf(
+        GuardianFeedbackAction.CONTACTED_USER,
+        GuardianFeedbackAction.KEEP_WATCHING,
+        GuardianFeedbackAction.FALSE_POSITIVE,
+        GuardianFeedbackAction.INCREASE_PRIORITY,
+        GuardianFeedbackAction.DECREASE_PRIORITY,
+        GuardianFeedbackAction.REMIND_LATER,
+        GuardianFeedbackAction.MUTE_THIS_EVENT
+    )
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("监护人远程反馈模拟", style = MaterialTheme.typography.titleMedium)
+            Text("当前反馈：${currentFeedback ?: records.firstOrNull()?.action?.displayName ?: "暂无"}")
+            actions.forEach { action ->
+                FilterChip(
+                    selected = records.firstOrNull()?.action == action,
+                    onClick = { onFeedback(action) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(action.displayName) }
+                )
+            }
+            if (records.isNotEmpty()) {
+                Text("最近反馈：")
+                records.take(4).forEach { record ->
+                    Text("${record.createdAt.toReadableTime()} · ${record.guardianName} · ${record.action.displayName} · 调参 ${record.sensitivityAdjustment}")
+                }
             }
         }
     }
@@ -662,13 +813,19 @@ private fun GuardianDashboardScreen(
     realtime: RealtimeUiState,
     todaySummary: DailyMonitoringSummary,
     settings: GuardianSettings,
+    guardianProfile: GuardianSettingsSnapshot,
+    notificationRecords: List<GuardianNotificationRecord>,
+    guardianFeedbackRecords: List<GuardianFeedbackRecord>,
     careMode: CareMode,
     policy: CareModePolicy,
     latestEvent: RiskEventEntity?,
     onSettingsChange: (GuardianSettings) -> Unit,
+    onGuardianProfileChange: (GuardianSettingsSnapshot) -> Unit,
     onStartPassiveGuardian: () -> Unit,
     onStopPassiveGuardian: () -> Unit,
-    onFeedback: (String) -> Unit
+    onFeedback: (String) -> Unit,
+    onSimulateGuardianNotification: () -> Unit,
+    onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit
 ) {
     val context = LocalContext.current
     val boundary = DiscomfortBoundaryCalculator.boundaryFor(careMode)
@@ -686,6 +843,11 @@ private fun GuardianDashboardScreen(
     ) {
         Text("守护", style = MaterialTheme.typography.headlineMedium)
         Text(careMode.guardianModeDescription(), style = MaterialTheme.typography.bodyMedium)
+        GuardianSettingsPanel(
+            profile = guardianProfile,
+            careMode = careMode,
+            onProfileChange = onGuardianProfileChange
+        )
         DiscomfortBoundaryCard(careMode)
         RuntimeGuardStatusCard(
             realtime = realtime,
@@ -767,6 +929,17 @@ private fun GuardianDashboardScreen(
                 Text("自我监测模式默认隐藏监护人提醒，只展示个人趋势和温和提醒。", modifier = Modifier.padding(14.dp))
             }
         } else {
+            GuardianNotificationHistoryCard(notificationRecords)
+            latestEvent?.let {
+                Button(onClick = onSimulateGuardianNotification, modifier = Modifier.fillMaxWidth()) {
+                    Text("模拟通知监护人")
+                }
+                GuardianRemoteFeedbackPanel(
+                    records = guardianFeedbackRecords.filter { record -> record.eventId == it.id },
+                    currentFeedback = it.guardianFeedback,
+                    onFeedback = onRemoteGuardianFeedback
+                )
+            }
             GuardianFeedbackButtons(
                 currentFeedback = latestEvent?.guardianFeedback,
                 onFeedback = onFeedback
@@ -786,6 +959,140 @@ private fun DiscomfortBoundaryCard(careMode: CareMode) {
             Text("每日上限：${boundary.dailyLimit} 次 / 冷却：${boundary.cooldownMinutes} 分钟")
             Text(boundary.explanation)
             Text("最终判断会融合本地结构化算法、MiniMax 模型输出、数据可信度和运动干扰。")
+        }
+    }
+}
+
+@Composable
+private fun GuardianSettingsPanel(
+    profile: GuardianSettingsSnapshot,
+    careMode: CareMode,
+    onProfileChange: (GuardianSettingsSnapshot) -> Unit
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("监护人信息与授权", style = MaterialTheme.typography.titleMedium)
+            Text("当前为模拟通知，不会真实发送给监护人。用户授权后才允许接入真实守护通知。")
+            Text("授权状态：${profile.authorizationStatus.displayName}")
+            TextField(
+                value = profile.guardianName,
+                onValueChange = { onProfileChange(profile.copy(guardianName = it)) },
+                label = { Text("监护人姓名") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            TextField(
+                value = profile.relationship,
+                onValueChange = { onProfileChange(profile.copy(relationship = it)) },
+                label = { Text("关系，例如 父母 / 伴侣 / 朋友") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            TextField(
+                value = profile.phone,
+                onValueChange = { onProfileChange(profile.copy(phone = it)) },
+                label = { Text("手机号") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            TextField(
+                value = profile.wechat,
+                onValueChange = { onProfileChange(profile.copy(wechat = it)) },
+                label = { Text("微信号，可选") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            TextField(
+                value = profile.email,
+                onValueChange = { onProfileChange(profile.copy(email = it)) },
+                label = { Text("邮箱，可选") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GuardianNotificationChannel.entries.forEach { channel ->
+                    FilterChip(
+                        selected = profile.notificationChannels.contains(channel),
+                        onClick = {
+                            val updated = if (profile.notificationChannels.contains(channel)) {
+                                profile.notificationChannels - channel
+                            } else {
+                                profile.notificationChannels + channel
+                            }
+                            onProfileChange(profile.copy(notificationChannels = updated.ifEmpty { listOf(GuardianNotificationChannel.APP) }))
+                        },
+                        label = { Text(channel.displayName) }
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextField(
+                    value = profile.notificationStart,
+                    onValueChange = { onProfileChange(profile.copy(notificationStart = it)) },
+                    label = { Text("开始") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+                TextField(
+                    value = profile.notificationEnd,
+                    onValueChange = { onProfileChange(profile.copy(notificationEnd = it)) },
+                    label = { Text("结束") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+            }
+            FilterChip(
+                selected = profile.notificationEnabled,
+                onClick = { onProfileChange(profile.copy(notificationEnabled = !profile.notificationEnabled)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(if (profile.notificationEnabled) "通知：已开启" else "通知：未开启") }
+            )
+            FilterChip(
+                selected = profile.allowNightEmergency,
+                onClick = { onProfileChange(profile.copy(allowNightEmergency = !profile.allowNightEmergency)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("允许夜间重点提醒") }
+            )
+            FilterChip(
+                selected = profile.specialCareEnabled || careMode == CareMode.SPECIAL_CARE,
+                onClick = { onProfileChange(profile.copy(specialCareEnabled = !profile.specialCareEnabled)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("特殊关怀模式辅助策略") }
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { onProfileChange(profile.copy(authorizationStatus = GuardianAuthorizationStatus.AUTHORIZED, notificationEnabled = true)) },
+                    modifier = Modifier.weight(1f)
+                ) { Text("确认授权") }
+                OutlinedButton(
+                    onClick = { onProfileChange(profile.copy(authorizationStatus = GuardianAuthorizationStatus.REVOKED, notificationEnabled = false)) },
+                    modifier = Modifier.weight(1f)
+                ) { Text("撤销授权") }
+            }
+            OutlinedButton(
+                onClick = { onProfileChange(profile.copy(authorizationStatus = GuardianAuthorizationStatus.PENDING, notificationEnabled = false)) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("仅本地体验")
+            }
+            Text("不上传输入原文，不共享聊天内容，只共享摘要、状态偏离等级和结构化原因。本系统不是医疗诊断工具。")
+        }
+    }
+}
+
+@Composable
+private fun GuardianNotificationHistoryCard(records: List<GuardianNotificationRecord>) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("最近通知记录", style = MaterialTheme.typography.titleMedium)
+            if (records.isEmpty()) {
+                Text("暂无模拟通知记录。")
+            } else {
+                records.take(5).forEach { record ->
+                    Text("${record.sentAt.toReadableTime()} · ${record.guardianName} · ${record.status.displayName} · ${record.channels.joinToString("、") { it.displayName }}")
+                    Text("原因：${record.reason}")
+                }
+            }
         }
     }
 }
@@ -825,6 +1132,7 @@ private fun SettingsDashboardScreen(
     onOpenBluetoothSettings: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
     onConnectWear: () -> Unit,
+    onSendWearBreathPattern: () -> Unit,
     onClearHabitMemory: () -> Unit,
     onSeedDemoMode: (String) -> Unit,
     onDebugLog: () -> Unit
@@ -879,6 +1187,9 @@ private fun SettingsDashboardScreen(
                 Text("设备连接", style = MaterialTheme.typography.titleMedium)
                 Text("连接状态：$wearConnectionStatus")
                 Button(onClick = onConnectWear, modifier = Modifier.fillMaxWidth()) { Text("连接 Wear OS 手表") }
+                OutlinedButton(onClick = onSendWearBreathPattern, modifier = Modifier.fillMaxWidth()) {
+                    Text("发送手表呼吸引导 4/6")
+                }
                 OutlinedButton(onClick = onOpenBluetoothSettings, modifier = Modifier.fillMaxWidth()) { Text("打开蓝牙设置") }
             }
         }

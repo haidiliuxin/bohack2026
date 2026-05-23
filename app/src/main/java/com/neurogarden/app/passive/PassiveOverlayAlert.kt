@@ -64,11 +64,13 @@ object PassiveOverlayAlert {
                 text = "30秒呼吸"
                 setOnClickListener { startBreathingGuide(careView) }
             }
-            val openAppButton = Button(appContext).apply {
-                text = "打开陪伴"
+            val openChatButton = Button(appContext).apply {
+                text = "和我聊聊"
                 setOnClickListener {
                     appContext.startActivity(
                         Intent(appContext, MainActivity::class.java)
+                            .setAction(MainActivity.ACTION_OPEN_CHAT)
+                            .putExtra(MainActivity.EXTRA_OPEN_CHAT, true)
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     )
                     dismiss(appContext)
@@ -79,7 +81,7 @@ object PassiveOverlayAlert {
             container.addView(careView)
             buttonRow.addView(closeButton)
             buttonRow.addView(breathingButton)
-            buttonRow.addView(openAppButton)
+            buttonRow.addView(openChatButton)
             container.addView(buttonRow)
 
             val params = WindowManager.LayoutParams(
@@ -112,7 +114,7 @@ object PassiveOverlayAlert {
         val steps = listOf(
             "吸气：像闻到清新的空气一样，慢慢数到 4。",
             "停一下：肩膀可以放低一点，手指松开。",
-            "呼气：慢慢数到 6，把刚才紧绷的感觉送出去。",
+            "呼气：慢慢数到 6，把刚才绷紧的感觉送出去。",
             "再来一轮：只做这一口气就好，不用急着解决全部问题。"
         )
         var index = 0

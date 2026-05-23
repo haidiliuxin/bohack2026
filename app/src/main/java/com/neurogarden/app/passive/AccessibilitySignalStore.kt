@@ -45,7 +45,6 @@ object AccessibilitySignalStore {
     fun recordServiceConnected(context: Context, eventTime: Long) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
-            .putLong(KEY_LAST_EVENT_AT, eventTime)
             .putInt(KEY_LAST_EVENT_TYPE, SERVICE_CONNECTED_EVENT)
             .apply()
     }
@@ -102,7 +101,6 @@ object AccessibilitySignalStore {
     fun recordRawEvent(context: Context, eventType: Int, eventTime: Long, packageName: String? = null) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
-            .putLong(KEY_LAST_EVENT_AT, eventTime)
             .putInt(KEY_LAST_EVENT_TYPE, eventType)
             .putString(KEY_LAST_APP_CATEGORY, packageName.toAppCategory())
             .apply()

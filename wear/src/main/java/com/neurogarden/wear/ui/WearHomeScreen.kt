@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -50,14 +51,14 @@ fun WearHomeScreen(
         ScalingLazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = rememberScalingLazyListState(),
-            contentPadding = PaddingValues(top = 34.dp, bottom = 30.dp, start = 26.dp, end = 26.dp),
+            contentPadding = PaddingValues(top = 30.dp, bottom = 34.dp, start = 42.dp, end = 42.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             item { WatchHeader(state) }
             item { VitalCircle(state) }
-            item { EmotionSnapshot(state) }
             item { MetricStrip(state) }
+            item { StatusSnapshot(state) }
             item { EvidenceCard(state) }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -68,7 +69,7 @@ fun WearHomeScreen(
                     )
                     CompactChip(
                         onClick = onSyncPhone,
-                        label = { Text("同步", fontSize = 12.sp) },
+                        label = { Text("同步手机", fontSize = 12.sp) },
                         colors = ChipDefaults.primaryChipColors()
                     )
                 }
@@ -79,7 +80,9 @@ fun WearHomeScreen(
                     label = { Text("呼吸引导", fontSize = 13.sp) },
                     secondaryLabel = { Text("4 秒吸气 / 6 秒呼气", fontSize = 11.sp) },
                     colors = ChipDefaults.chipColors(backgroundColor = Color(0xFF143B3A)),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth(0.82f)
+                        .widthIn(max = 260.dp)
                 )
             }
         }
@@ -91,14 +94,14 @@ private fun WatchHeader(state: WatchVitalUiState) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = "NeuroGarden",
-            fontSize = 15.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFFE9FFFA),
             maxLines = 1
         )
         Text(
             text = if (state.phoneConnected) "手机已同步" else "等待手机同步",
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             color = if (state.phoneConnected) Color(0xFF6EE7D8) else Color(0xFFFFD38A),
             maxLines = 1
         )
@@ -110,7 +113,7 @@ private fun VitalCircle(state: WatchVitalUiState) {
     val color = state.riskState.toColor()
     Box(
         modifier = Modifier
-            .size(154.dp)
+            .size(132.dp)
             .clip(CircleShape),
         contentAlignment = Alignment.Center
     ) {
@@ -144,13 +147,13 @@ private fun VitalCircle(state: WatchVitalUiState) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     text = state.heartRate.toString(),
-                    fontSize = 42.sp,
+                    fontSize = 38.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
                 Text(
                     text = " bpm",
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     color = Color(0xFFB8C9C6),
                     modifier = Modifier.padding(bottom = 7.dp)
                 )
@@ -158,6 +161,7 @@ private fun VitalCircle(state: WatchVitalUiState) {
             Text(
                 text = state.riskState.label,
                 fontSize = 14.sp,
+                maxLines = 1,
                 color = color,
                 fontWeight = FontWeight.SemiBold
             )
@@ -166,33 +170,41 @@ private fun VitalCircle(state: WatchVitalUiState) {
 }
 
 @Composable
-private fun EmotionSnapshot(state: WatchVitalUiState) {
+private fun StatusSnapshot(state: WatchVitalUiState) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxWidth(0.82f)
+            .widthIn(max = 270.dp)
             .clip(RoundedCornerShape(20.dp))
             .background(Color(0xFF0D1A1E))
-            .padding(12.dp),
+            .padding(horizontal = 11.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Text(
-            text = "状态线索：${state.emotionLabel}",
-            fontSize = 13.sp,
+            text = "状态线索：${state.statusLabel}",
+            fontSize = 12.sp,
             color = state.riskState.toColor(),
             fontWeight = FontWeight.SemiBold,
             maxLines = 1
         )
         Text(
             text = "置信度 ${"%.0f".format(state.confidence * 100)}% · 数据质量 ${state.dataQuality.label}",
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             color = Color(0xFFC5D8D3),
             maxLines = 1
         )
         Text(
             text = "同步 ${state.lastSyncText()} · 来源 ${state.dataSource.label}",
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             color = Color(0xFF93AAA5),
             maxLines = 1
+        )
+        Text(
+            text = state.lastCommandText,
+            fontSize = 11.sp,
+            color = Color(0xFF93AAA5),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -201,23 +213,24 @@ private fun EmotionSnapshot(state: WatchVitalUiState) {
 private fun MetricStrip(state: WatchVitalUiState) {
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxWidth(0.82f)
+            .widthIn(max = 270.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(Color(0xFF102025))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         SmallMetric("呼吸", "${state.breathRate}/min")
         SmallMetric("运动", state.motionLabel())
-        SmallMetric("模式", state.riskState.label)
+        SmallMetric("状态", state.riskState.label)
     }
 }
 
 @Composable
 private fun SmallMetric(title: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, fontSize = 11.sp, color = Color(0xFF7F9691), maxLines = 1)
-        Text(value, fontSize = 13.sp, color = Color.White, maxLines = 1)
+        Text(title, fontSize = 10.sp, color = Color(0xFF7F9691), maxLines = 1)
+        Text(value, fontSize = 12.sp, color = Color.White, maxLines = 1)
     }
 }
 
@@ -225,20 +238,21 @@ private fun SmallMetric(title: String, value: String) {
 private fun EvidenceCard(state: WatchVitalUiState) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxWidth(0.82f)
+            .widthIn(max = 270.dp)
             .clip(RoundedCornerShape(20.dp))
             .background(Color(0xFF0C171B))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(horizontal = 11.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
-        Text("判断依据", fontSize = 13.sp, color = Color(0xFFE9FFFA), fontWeight = FontWeight.SemiBold)
-        state.observedClues.take(3).ifEmpty { listOf("体征节律平稳") }.forEach {
+        Text("判断依据", fontSize = 12.sp, color = Color(0xFFE9FFFA), fontWeight = FontWeight.SemiBold)
+        state.observedClues.take(2).ifEmpty { listOf("体征节律平稳") }.forEach {
             WatchLine("证据", it)
         }
-        state.counterEvidence.take(2).forEach {
+        state.counterEvidence.take(1).forEach {
             WatchLine("限制", it)
         }
-        WatchLine("不确定", state.uncertainty)
+        WatchLine("说明", state.uncertainty)
     }
 }
 
@@ -246,7 +260,7 @@ private fun EvidenceCard(state: WatchVitalUiState) {
 private fun WatchLine(prefix: String, text: String) {
     Text(
         text = "$prefix：$text",
-        fontSize = 12.sp,
+        fontSize = 11.sp,
         color = Color(0xFFB7C8C4),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
