@@ -73,7 +73,7 @@ class PassiveGuardianService : Service() {
     private suspend fun monitorLoop() {
         while (currentCoroutineContext().isActive) {
             runCatching { collectAndEvaluate() }
-            delay(10_000L)  // 检测间隔 10 秒，确保 30 秒内可响应异常
+            delay(MONITOR_INTERVAL_MS)
         }
     }
 
@@ -199,7 +199,7 @@ class PassiveGuardianService : Service() {
             )
         )
 
-        if (combinedAlert != null) {
+        if (combinedAlert != null && NotificationPolicyStore.canShowPopup(this, now)) {
             PendingPassiveAlertStore.save(
                 context = this,
                 title = notificationPlan.title,
@@ -207,6 +207,7 @@ class PassiveGuardianService : Service() {
                 now = now
             )
             PassiveOverlayAlert.show(this, notificationPlan.title, notificationPlan.message)
+            NotificationPolicyStore.recordPopup(this, now)
         }
 
         combinedAlertTicks = if (combinedAlert != null) combinedAlertTicks + 1 else 0
@@ -265,7 +266,7 @@ class PassiveGuardianService : Service() {
         interactionRisk: Float,
         physiologyRisk: Float
     ): String? {
-        if (packet == null) return "未满足：没有真实手表数据，也没有开启模拟手表数据。"
+        if (packet == null) return null
         if (packet.motionLevel >= 0.60f) return "未满足：运动干扰过高，避免误报。"
         if (interactionRisk < 0.40f || physiologyRisk < 0.35f) return null
 
@@ -422,7 +423,8 @@ class PassiveGuardianService : Service() {
         private const val ONGOING_NOTIFICATION_ID = 1001
         private const val SUPPORT_NOTIFICATION_ID = 1002
         private const val ACTION_EVALUATE_NOW = "com.neurogarden.app.passive.EVALUATE_NOW"
-        private const val IMMEDIATE_EVALUATION_COOLDOWN_MS = 2_000L
+        private const val MONITOR_INTERVAL_MS = 30_000L
+        private const val IMMEDIATE_EVALUATION_COOLDOWN_MS = 30_000L
 
         fun requestImmediateEvaluation(context: Context) {
             val intent = Intent(context, PassiveGuardianService::class.java).apply {

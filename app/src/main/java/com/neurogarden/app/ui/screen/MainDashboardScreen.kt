@@ -155,6 +155,7 @@ fun MainDashboardScreen(
     onSendSupportReply: (String) -> Unit,
     onEventFeedback: (Long, String) -> Unit,
     onSimulateGuardianNotification: (RiskEventEntity) -> Unit,
+    onSendGuardianSms: (RiskEventEntity) -> Unit,
     onRemoteGuardianFeedback: (RiskEventEntity, GuardianFeedbackAction) -> Unit,
     observeRiskEventById: (Long) -> Flow<RiskEventEntity?>,
     onClearHabitMemory: () -> Unit,
@@ -252,6 +253,9 @@ fun MainDashboardScreen(
                     onSimulateGuardianNotification = {
                         latestEvent?.let(onSimulateGuardianNotification)
                     },
+                    onSendGuardianSms = {
+                        latestEvent?.let(onSendGuardianSms)
+                    },
                     onRemoteGuardianFeedback = { action ->
                         latestEvent?.let { onRemoteGuardianFeedback(it, action) }
                     }
@@ -305,7 +309,8 @@ fun MainDashboardScreen(
                 selectedEventId = null
                 onBeginSupportConversation()
                 tab = MainTab.CHAT
-            }
+            },
+            onSendGuardianSms = { onSendGuardianSms(event) }
         )
     }
 
@@ -798,6 +803,7 @@ private fun GuardianTab(
     onStopPassiveGuardian: () -> Unit,
     onFeedback: (String) -> Unit,
     onSimulateGuardianNotification: () -> Unit,
+    onSendGuardianSms: () -> Unit,
     onRemoteGuardianFeedback: (GuardianFeedbackAction) -> Unit
 ) {
     var emotionSensitivity by remember { mutableFloatStateOf(0.60f) }
@@ -888,6 +894,13 @@ private fun GuardianTab(
                     onClick = onSimulateGuardianNotification,
                     modifier = Modifier.weight(1f)
                 )
+                NeuroSecondaryButton(
+                    text = "短信通知",
+                    onClick = onSendGuardianSms,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 NeuroSecondaryButton(
                     text = "我还好",
                     onClick = { onFeedback("我还好") },
@@ -1509,7 +1522,8 @@ private fun EventDetailDialog(
     event: RiskEventEntity,
     careMode: CareMode,
     onDismiss: () -> Unit,
-    onOpenChat: () -> Unit
+    onOpenChat: () -> Unit,
+    onSendGuardianSms: () -> Unit
 ) {
     NeuroAlertDialog(
         title = "预警详情",
@@ -1523,6 +1537,9 @@ private fun EventDetailDialog(
         Text("Agent：${event.agentAnalysis.ifBlank { "暂无模型补充说明。" }}", color = NeuroColors.TextMuted, style = MaterialTheme.typography.bodySmall)
         TextButton(onClick = onOpenChat) {
             Text("去话聊", color = NeuroColors.Blue)
+        }
+        TextButton(onClick = onSendGuardianSms) {
+            Text("短信通知监护人", color = NeuroColors.Blue)
         }
     }
 }

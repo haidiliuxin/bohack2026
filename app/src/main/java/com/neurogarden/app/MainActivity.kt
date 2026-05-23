@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -45,6 +46,7 @@ import com.neurogarden.app.guardian.GuardianFeedbackRecord
 import com.neurogarden.app.guardian.GuardianNotificationChannel
 import com.neurogarden.app.guardian.GuardianNotificationRecord
 import com.neurogarden.app.guardian.GuardianNotificationService
+import com.neurogarden.app.guardian.GuardianNotificationStatus
 import com.neurogarden.app.guardian.GuardianSettingsSnapshot
 import com.neurogarden.app.guardian.SpecialCareService
 import com.neurogarden.app.ui.screen.DebugLogScreen
@@ -259,6 +261,49 @@ private fun NeuroGardenRoot(
         careLoopRecords = listOf(updatedLoop) + careLoopRecords.filterNot { it.eventId == event.id }
     }
 
+    val sendGuardianSmsDraft: (com.neurogarden.app.data.local.RiskEventEntity) -> Unit = { event ->
+        val phone = guardianProfile.phone.trim().ifBlank { guardianSettings.contact.trim() }
+        when {
+            phone.isBlank() -> {
+                Toast.makeText(context, "请先填写监护人手机号", Toast.LENGTH_SHORT).show()
+            }
+
+            guardianProfile.authorizationStatus != GuardianAuthorizationStatus.AUTHORIZED -> {
+                Toast.makeText(context, "请先在守护页确认授权，再打开短信通知", Toast.LENGTH_SHORT).show()
+            }
+
+            else -> {
+                val message = buildGuardianSmsMessage(event)
+                val now = System.currentTimeMillis()
+                val draftRecord = GuardianNotificationRecord(
+                    notificationId = "sms_draft_${now}_${event.id}",
+                    eventId = event.id,
+                    guardianName = guardianProfile.guardianName.ifBlank { guardianSettings.name },
+                    relationship = guardianProfile.relationship.ifBlank { guardianSettings.relation },
+                    channels = listOf(GuardianNotificationChannel.SMS),
+                    status = GuardianNotificationStatus.PENDING,
+                    reason = "已打开系统短信，等待用户确认发送",
+                    riskLevel = event.riskLevel,
+                    deviationLevel = null,
+                    sentAt = now,
+                    cooldownApplied = false,
+                    strategyTags = listOf("user_confirmed_sms", "system_sms_app"),
+                    messagePreview = message
+                )
+                guardianNotificationRecords = listOf(draftRecord) + guardianNotificationRecords
+                runCatching {
+                    val intent = Intent(Intent.ACTION_SENDTO).apply {
+                        data = Uri.parse("smsto:${Uri.encode(phone)}")
+                        putExtra("sms_body", message)
+                    }
+                    context.startActivity(intent)
+                }.onFailure {
+                    Toast.makeText(context, "未找到可用短信应用", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     BackHandler(enabled = showDebugLog) {
         showDebugLog = false
     }
@@ -393,6 +438,7 @@ private fun NeuroGardenRoot(
                 onSendSupportReply = mainViewModel::sendSupportReply,
                 onEventFeedback = mainViewModel::submitGuardianFeedback,
                 onSimulateGuardianNotification = simulateGuardianNotification,
+                onSendGuardianSms = sendGuardianSmsDraft,
                 onRemoteGuardianFeedback = submitRemoteGuardianFeedback,
                 observeRiskEventById = mainViewModel::observeRiskEvent,
                 onClearHabitMemory = mainViewModel::clearHabitMemory,
@@ -445,4 +491,23 @@ private fun NeuroGardenRoot(
         }
     }
 
+}
+
+private fun buildGuardianSmsMessage(event: com.neurogarden.app.data.local.RiskEventEntity): String {
+    val reasons = event.mainReasons
+        .split("|", ";", "、")
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .take(3)
+        .joinToString(" / ")
+        .ifBlank { "continuous rhythm deviation" }
+    val level = when (event.riskLevel) {
+        "guardian_check" -> "care confirmation suggested"
+        "urgent_support" -> "focus attention"
+        "support" -> "guardian reminder"
+        "observe" -> "observe needed"
+        else -> "state fluctuation"
+    }
+    return "NeuroGarden reminder: continuous rhythm deviation detected. Current level: $level. Reasons: $reasons. Structured summary only, no original text, not a medical diagnosis."
+        .take(150)
 }

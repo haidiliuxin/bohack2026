@@ -57,7 +57,7 @@ class TypingFeatureAccessibilityService : AccessibilityService() {
         evaluateRunnable = Runnable {
             PassiveGuardianService.requestImmediateEvaluation(this)
         }
-        handler.postDelayed(evaluateRunnable!!, 1_500L)
+        handler.postDelayed(evaluateRunnable!!, 30_000L)
     }
 
     private fun fallbackDelta(event: AccessibilityEvent): Int {
