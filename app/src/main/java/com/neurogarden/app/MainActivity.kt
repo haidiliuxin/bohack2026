@@ -2,6 +2,7 @@ package com.neurogarden.app
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -188,6 +189,16 @@ private fun NeuroGardenRoot(
                 },
                 onOpenBluetoothSettings = {
                     context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                },
+                onOpenOverlaySettings = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                        )
+                    }
                 },
                 onConnectWear = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

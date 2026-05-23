@@ -1,5 +1,7 @@
 package com.neurogarden.app.ui.screen
 
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -78,6 +80,7 @@ fun MainDashboardScreen(
     onStopPassiveGuardian: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
     onConnectWear: () -> Unit,
     onContinueMock: () -> Unit,
     onFeedback: (String) -> Unit,
@@ -183,6 +186,7 @@ fun MainDashboardScreen(
                         onSettingsChange = onGuardianSettingsChange,
                         onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                         onOpenBluetoothSettings = onOpenBluetoothSettings,
+                        onOpenOverlaySettings = onOpenOverlaySettings,
                         onConnectWear = onConnectWear,
                         onClearHabitMemory = onClearHabitMemory,
                         onSeedDemoMode = onSeedDemoMode,
@@ -738,6 +742,7 @@ private fun SettingsDashboardScreen(
     onSettingsChange: (GuardianSettings) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
     onConnectWear: () -> Unit,
     onClearHabitMemory: () -> Unit,
     onSeedDemoMode: (String) -> Unit,
@@ -745,6 +750,8 @@ private fun SettingsDashboardScreen(
 ) {
     val context = LocalContext.current
     val typingStatus = AccessibilitySignalStore.status(context.applicationContext)
+    val overlayEnabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+        Settings.canDrawOverlays(context.applicationContext)
     Column(
         Modifier
             .fillMaxSize()
@@ -788,6 +795,16 @@ private fun SettingsDashboardScreen(
                 Text("设备连接", style = MaterialTheme.typography.titleMedium)
                 Button(onClick = onConnectWear, modifier = Modifier.fillMaxWidth()) { Text("连接 Wear OS 手表") }
                 OutlinedButton(onClick = onOpenBluetoothSettings, modifier = Modifier.fillMaxWidth()) { Text("打开蓝牙设置") }
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("悬浮窗提醒", style = MaterialTheme.typography.titleMedium)
+                Text("想要在微信、备忘录等其他 App 里直接弹出提醒，必须开启系统的“在其他应用上层显示”权限。")
+                Text("当前状态：${if (overlayEnabled) "已开启" else "未开启"}")
+                OutlinedButton(onClick = onOpenOverlaySettings, modifier = Modifier.fillMaxWidth()) {
+                    Text("打开悬浮窗权限")
+                }
             }
         }
         DemoModeCard(onSeedDemoMode)
