@@ -33,6 +33,7 @@ import com.neurogarden.app.algorithm.TrendAnalyzer
 import com.neurogarden.app.algorithm.TrendAssessment
 import com.neurogarden.app.data.local.FeedbackRecordEntity
 import com.neurogarden.app.data.local.ConversationSummaryEntity
+import com.neurogarden.app.data.local.EmotionEvaluationRecordEntity
 import com.neurogarden.app.data.local.HabitSampleEntity
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.SensorRecordEntity
@@ -558,6 +559,27 @@ class MainViewModel(
                     helpful = label != "没事",
                     source = "emotion_label",
                     createdAt = now
+                )
+            )
+            habitRepository.saveEmotionEvaluation(
+                EmotionEvaluationRecordEntity(
+                    createdAt = now,
+                    predictedPrimaryEmotion = state.emotionalState.primaryState,
+                    predictedSecondaryEmotions = state.emotionalState.secondaryStates.joinToString("|"),
+                    userCorrectedEmotion = label,
+                    confidence = state.emotionalState.confidence,
+                    valence = state.emotionalState.valenceScore,
+                    arousal = state.emotionalState.arousalScore,
+                    stress = state.emotionalState.stressScore,
+                    fatigue = state.emotionalState.fatigueScore,
+                    loneliness = state.emotionalState.lonelinessScore,
+                    signalSummary = "heart=${state.packet.heartRate};breath=${state.packet.breathRate};motion=${"%.2f".format(state.packet.motionLevel)};risk=${"%.2f".format(state.personalizedRisk.riskScore)}",
+                    contextSummary = "mode=${careMode.value.name};weather=${state.weather.eventLabel()};lastLabel=${state.lastUserEmotionLabel ?: "none"}",
+                    agentVersion = state.agentModel,
+                    wasAccepted = label == state.emotionalState.primaryState ||
+                        state.emotionalState.primaryState.contains(label) ||
+                        label.contains(state.emotionalState.primaryState),
+                    notes = "用户主动校准当前情绪标签"
                 )
             )
             val feedbackSummary = habitRepository.getFeedbackAccuracySummary()

@@ -4,6 +4,7 @@ import com.neurogarden.app.data.local.HabitDao
 import com.neurogarden.app.data.local.HabitSampleEntity
 import com.neurogarden.app.data.local.FeedbackRecordEntity
 import com.neurogarden.app.data.local.ConversationSummaryEntity
+import com.neurogarden.app.data.local.EmotionEvaluationRecordEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.app.data.local.UserHabitBaselineEntity
 
@@ -13,6 +14,7 @@ class HabitRepository(private val dao: HabitDao) {
     val latestThresholdProfile = dao.observeLatestThresholdProfile()
     val recentThresholdProfiles = dao.observeRecentThresholdProfiles()
     val feedbackRecords = dao.observeFeedbackRecords()
+    val emotionEvaluations = dao.observeEmotionEvaluations()
 
     suspend fun saveSample(sample: HabitSampleEntity): Long = dao.insertSample(sample)
 
@@ -39,6 +41,12 @@ class HabitRepository(private val dao: HabitDao) {
     suspend fun saveFeedback(record: FeedbackRecordEntity): Long =
         dao.insertFeedback(record)
 
+    suspend fun saveEmotionEvaluation(record: EmotionEvaluationRecordEntity): Long =
+        dao.insertEmotionEvaluation(record)
+
+    suspend fun getRecentEmotionEvaluations(limit: Int = 30): List<EmotionEvaluationRecordEntity> =
+        dao.getRecentEmotionEvaluations(limit)
+
     suspend fun getRecentFeedbackRecords(limit: Int = 30): List<FeedbackRecordEntity> =
         dao.getRecentFeedbackRecords(limit)
 
@@ -63,6 +71,7 @@ class HabitRepository(private val dao: HabitDao) {
         dao.clearBaselines()
         dao.clearThresholdProfiles()
         dao.clearFeedbackRecords()
+        dao.clearEmotionEvaluations()
         dao.clearConversationSummaries()
     }
 }

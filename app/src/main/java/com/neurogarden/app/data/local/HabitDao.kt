@@ -47,6 +47,15 @@ interface HabitDao {
     @Insert
     suspend fun insertFeedback(record: FeedbackRecordEntity): Long
 
+    @Insert
+    suspend fun insertEmotionEvaluation(record: EmotionEvaluationRecordEntity): Long
+
+    @Query("SELECT * FROM emotion_evaluation_records ORDER BY createdAt DESC")
+    fun observeEmotionEvaluations(): Flow<List<EmotionEvaluationRecordEntity>>
+
+    @Query("SELECT * FROM emotion_evaluation_records ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun getRecentEmotionEvaluations(limit: Int): List<EmotionEvaluationRecordEntity>
+
     @Query("SELECT * FROM feedback_records ORDER BY timestamp DESC")
     fun observeFeedbackRecords(): Flow<List<FeedbackRecordEntity>>
 
@@ -70,6 +79,9 @@ interface HabitDao {
 
     @Query("DELETE FROM feedback_records")
     suspend fun clearFeedbackRecords()
+
+    @Query("DELETE FROM emotion_evaluation_records")
+    suspend fun clearEmotionEvaluations()
 
     @Insert
     suspend fun insertConversationSummary(summary: ConversationSummaryEntity): Long

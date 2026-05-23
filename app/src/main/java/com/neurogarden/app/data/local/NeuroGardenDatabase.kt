@@ -15,9 +15,10 @@ import androidx.room.RoomDatabase
         FeedbackRecordEntity::class,
         ConversationSummaryEntity::class,
         RiskEventEntity::class,
-        AgentAuditLogEntity::class
+        AgentAuditLogEntity::class,
+        EmotionEvaluationRecordEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class NeuroGardenDatabase : RoomDatabase() {
