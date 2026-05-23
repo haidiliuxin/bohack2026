@@ -137,6 +137,7 @@ class MainViewModel(
     val recentRiskEvents = riskEventRepository.observeRecent7DayEvents()
     val agentAuditLogs = agentAuditLogRepository.recentLogs
     val feedbackRecords = habitRepository.feedbackRecords
+    val emotionEvaluations = habitRepository.emotionEvaluations
     val thresholdProfiles = habitRepository.recentThresholdProfiles
     val careMode: StateFlow<CareMode> = careModeStore.currentMode.stateIn(
         viewModelScope,

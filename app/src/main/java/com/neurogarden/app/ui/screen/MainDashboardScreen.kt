@@ -45,6 +45,7 @@ import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
 import com.neurogarden.app.algorithm.DiscomfortBoundaryCalculator
 import com.neurogarden.app.data.local.FeedbackRecordEntity
+import com.neurogarden.app.data.local.EmotionEvaluationRecordEntity
 import com.neurogarden.app.data.local.RiskEventEntity
 import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
@@ -80,6 +81,7 @@ fun MainDashboardScreen(
     careModePolicy: CareModePolicy,
     wearConnectionStatus: String,
     feedbackRecords: List<FeedbackRecordEntity>,
+    emotionEvaluations: List<EmotionEvaluationRecordEntity>,
     thresholdProfiles: List<ThresholdProfileEntity>,
     guardianSettings: GuardianSettings,
     onGuardianSettingsChange: (GuardianSettings) -> Unit,
@@ -200,6 +202,7 @@ fun MainDashboardScreen(
                         careModePolicy = careModePolicy,
                         wearConnectionStatus = wearConnectionStatus,
                         feedbackRecords = feedbackRecords,
+                        emotionEvaluations = emotionEvaluations,
                         thresholdProfiles = thresholdProfiles,
                         onCareModeChange = onCareModeChange,
                         onSettingsChange = onGuardianSettingsChange,
@@ -814,6 +817,7 @@ private fun SettingsDashboardScreen(
     careModePolicy: CareModePolicy,
     wearConnectionStatus: String,
     feedbackRecords: List<FeedbackRecordEntity>,
+    emotionEvaluations: List<EmotionEvaluationRecordEntity>,
     thresholdProfiles: List<ThresholdProfileEntity>,
     onCareModeChange: (CareMode) -> Unit,
     onSettingsChange: (GuardianSettings) -> Unit,
@@ -840,7 +844,7 @@ private fun SettingsDashboardScreen(
         CareModeSelector(careMode, careModePolicy, onCareModeChange)
         AgentConfigCard(realtime)
         DataSourceStatusCard(realtime, settings, wearConnectionStatus)
-        EmotionAcceptanceCard(feedbackRecords, realtime)
+        EmotionAcceptanceCard(feedbackRecords, emotionEvaluations, realtime)
         ThresholdHistoryCard(thresholdProfiles)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -957,21 +961,27 @@ private fun DataSourceStatusCard(
 @Composable
 private fun EmotionAcceptanceCard(
     feedbackRecords: List<FeedbackRecordEntity>,
+    emotionEvaluations: List<EmotionEvaluationRecordEntity>,
     realtime: RealtimeUiState
 ) {
     val recent = feedbackRecords.take(20)
+    val recentEvaluations = emotionEvaluations.take(20)
     val labeled = recent.filter { it.source == "emotion_label" || it.userLabel.isNotBlank() }
     val exact = labeled.count { it.userLabel == it.predictedState || it.predictedState.contains(it.userLabel) || it.userLabel.contains(it.predictedState) }
+    val accepted = recentEvaluations.count { it.wasAccepted }
     val helpful = recent.count { it.helpful }
     val falseAlarms = recent.count { it.userLabel.contains("误报") || !it.helpful }
     val hitRate = if (labeled.isEmpty()) 0f else exact.toFloat() / labeled.size.toFloat()
+    val evaluationHitRate = if (recentEvaluations.isEmpty()) 0f else accepted.toFloat() / recentEvaluations.size.toFloat()
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("情绪识别验收", style = MaterialTheme.typography.titleMedium)
             Text("当前识别：${realtime.emotionalState.primaryState} / 置信度 ${"%.0f".format(realtime.emotionalState.confidence * 100)}%")
             Text("近 20 条反馈：${recent.size} 条，有帮助 $helpful 条，误报/无帮助 $falseAlarms 条")
             Text("粗略标签命中：${"%.0f".format(hitRate * 100)}%（基于用户自评标签和系统预测文本匹配）")
+            Text("评估样本：${recentEvaluations.size} 条，用户接受 ${accepted} 条，接受率 ${"%.0f".format(evaluationHitRate * 100)}%")
             Text("常见用户标注：${labeled.groupingBy { it.userLabel }.eachCount().entries.sortedByDescending { it.value }.take(4).joinToString("、") { "${it.key}(${it.value})" }.ifBlank { "暂无" }}")
+            Text("最近纠正：${recentEvaluations.take(3).joinToString("、") { "${it.predictedPrimaryEmotion}->${it.userCorrectedEmotion}" }.ifBlank { "暂无" }}")
             Text("这个卡片用于验收趋势，不代表医学准确率。")
         }
     }

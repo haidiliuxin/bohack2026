@@ -119,6 +119,7 @@ private fun NeuroGardenRoot(
     val careModePolicy by mainViewModel.careModePolicy.collectAsState()
     val agentAuditLogs by mainViewModel.agentAuditLogs.collectAsState(initial = emptyList())
     val feedbackRecords by mainViewModel.feedbackRecords.collectAsState(initial = emptyList())
+    val emotionEvaluations by mainViewModel.emotionEvaluations.collectAsState(initial = emptyList())
     val thresholdProfiles by mainViewModel.thresholdProfiles.collectAsState(initial = emptyList())
     val sessions by therapyViewModel.sessions.collectAsState(initial = emptyList())
     val context = LocalContext.current
@@ -171,6 +172,7 @@ private fun NeuroGardenRoot(
                 careModePolicy = careModePolicy,
                 wearConnectionStatus = wearConnectionStatus,
                 feedbackRecords = feedbackRecords,
+                emotionEvaluations = emotionEvaluations,
                 thresholdProfiles = thresholdProfiles,
                 guardianSettings = guardianSettings,
                 onGuardianSettingsChange = { guardianSettings = it },
