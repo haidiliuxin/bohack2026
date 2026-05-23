@@ -24,15 +24,15 @@ object CompanionContextBuilder {
             }
             latestEvent?.let { event ->
                 val reasons = event.mainReasons.split("|").map { it.trim() }.filter { it.isNotEmpty() }
-                if (reasons.isNotEmpty()) add("预警直接原因：${reasons.take(3).joinToString("、")}")
-                add("预警时段：${event.startTime.shortTime()}，状态评分${"%.2f".format(event.riskScore)}")
+                if (reasons.isNotEmpty()) add("提醒直接原因：${reasons.take(3).joinToString("、")}")
+                add("提醒时段：${event.startTime.shortTime()}，状态评分 ${"%.2f".format(event.riskScore)}")
             }
         }.distinct()
 
         return if (signals.isEmpty()) {
             "近期只有少量结构化记录，暂时不推断具体原因。"
         } else {
-            "刚才更可能触发预警的线索：${signals.joinToString("；")}。这些线索只来自心率、呼吸、输入节奏和操作场景类别，不包含输入原文或具体内容。"
+            "刚才更可能触发提醒的线索：${signals.joinToString("；")}。这些线索只来自心率、呼吸、输入节奏和操作场景类别，不包含输入原文或具体内容。"
         }
     }
 
@@ -54,12 +54,14 @@ object CompanionContextBuilder {
             "暂无足够反馈"
         } else {
             val helpful = feedbacks.count { it.helpful }
-            "${helpful}/${feedbacks.size} 次反馈认为提醒有帮助"
+            "$helpful/${feedbacks.size} 次反馈认为提醒有帮助"
         }
 
         val style = inferPreferredStyle(lastEmotionLabel, summaries)
         val rhythm = inferRhythm(samples)
-        val memory = summaries.take(5).joinToString("；") { it.summary }
+        val memory = summaries.take(5)
+            .map { ChatTextSanitizer.cleanShortText(it.summary, "一次简短陪伴对话") }
+            .joinToString("；")
             .ifBlank { "暂无历史对话摘要" }
 
         return listOf(
@@ -77,12 +79,12 @@ object CompanionContextBuilder {
         personalityModel: String
     ): String {
         val contextHint = recentActivity
-            .replace("刚才更可能触发预警的线索：", "")
+            .removePrefix("刚才更可能触发提醒的线索：")
             .substringBefore("。这些线索")
             .take(90)
         val styleHint = when {
             personalityModel.contains("省力") -> "你不用组织很多语言，发一个词也可以。"
-            personalityModel.contains("少讲道理") -> "我先不讲道理，只陪你把这一下放轻一点。"
+            personalityModel.contains("少讲道理") -> "我先不讲道理，只陪你把这一刻放轻一点。"
             personalityModel.contains("安全感") -> "我们先确认此刻是安全、可控的。"
             else -> "你可以只说一个词，我会跟着你的节奏来。"
         }
@@ -91,7 +93,7 @@ object CompanionContextBuilder {
             "support" -> "我看到刚才有一阵节律变紧，$contextHint"
             "observe" -> "刚才有一点节律偏离，$contextHint"
             else -> "我在，刚才的记录没有显示特别强的波动"
-        }.trim().trimEnd('，', '；')
+        }.trim().trimEnd('；', '，')
 
         return "$riskOpening。$styleHint"
     }
@@ -102,17 +104,17 @@ object CompanionContextBuilder {
         recentActivity: String
     ): String {
         val userTone = when {
-            userMessage.contains("狂躁") || userMessage.contains("烦") -> "用户表达烦躁或高唤醒"
+            userMessage.contains("焦") || userMessage.contains("慌") -> "用户表达焦躁或高唤醒"
             userMessage.contains("难受") || userMessage.contains("低落") -> "用户表达难受或低落"
             userMessage.contains("累") || userMessage.contains("困") -> "用户表达疲惫"
-            userMessage.contains("慌") || userMessage.contains("紧张") -> "用户表达紧张"
+            userMessage.contains("紧张") -> "用户表达紧张"
             userMessage.contains("没事") || userMessage.contains("还好") -> "用户表示状态可控"
             else -> "用户进行了简短回应"
         }
         val supportMove = when {
             assistantReply.contains("联系") || assistantReply.contains("守护") -> "建议连接可信任支持"
-            assistantReply.contains("呼") || assistantReply.contains("呼吸") -> "建议呼吸和落地练习"
-            assistantReply.contains("水") || assistantReply.contains("坐") -> "建议低成本照顾动作"
+            assistantReply.contains("呼吸") || assistantReply.contains("慢慢") -> "建议呼吸和落地练习"
+            assistantReply.contains("水") || assistantReply.contains("坐") -> "建议低成本照护动作"
             else -> "继续支持性倾听"
         }
         val trigger = recentActivity.substringAfter("线索：", recentActivity).substringBefore("。").take(80)
@@ -122,11 +124,11 @@ object CompanionContextBuilder {
     private fun HabitSampleEntity.behaviorSignals(): List<String> = buildList {
         if (typingSpeed >= 150f) add("输入节奏明显变快")
         if (typingSpeed in 1f..55f) add("输入速度明显放慢")
-        if (deleteRate >= 0.18f) add("反复修改或删除增多")
+        if (deleteRate >= 0.18f) add("反复修改或删除增加")
         if (pauseDuration >= 6f && typingSpeed > 0f) add("输入后停顿变长")
         if (heartRate >= 96) add("心率偏高")
         if (breathRate >= 18) add("呼吸偏快")
-        if (motionLevel >= 0.60f) add("运动干扰较高，需谨慎判断")
+        if (motionLevel >= 0.60f) add("运动干扰较高，需要谨慎判断")
     }
 
     private fun HabitSampleEntity.appSceneLabel(): String = when {
@@ -146,7 +148,7 @@ object CompanionContextBuilder {
     ): String = when {
         lastEmotionLabel == "累" || summaries.any { it.summary.contains("疲惫") } ->
             "省力、短句、允许休息，避免布置复杂任务"
-        lastEmotionLabel == "烦" || summaries.any { it.summary.contains("烦躁") } ->
+        lastEmotionLabel == "焦" || summaries.any { it.summary.contains("焦躁") } ->
             "少讲道理，先承认感受，再给一个很小的选择"
         lastEmotionLabel == "低落" || summaries.any { it.summary.contains("低落") } ->
             "稳定陪伴、低压力确认、避免积极说教"

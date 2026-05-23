@@ -7,6 +7,7 @@ import com.neurogarden.app.BuildConfig
 import com.neurogarden.app.agent.AgentSignalRequest
 import com.neurogarden.app.agent.AgentSignalResponse
 import com.neurogarden.app.agent.AgentPromptVersions
+import com.neurogarden.app.agent.ChatTextSanitizer
 import com.neurogarden.app.agent.CompanionContextBuilder
 import com.neurogarden.app.agent.GuardianAgentApi
 import com.neurogarden.app.agent.SupportConversationMessageDto
@@ -648,27 +649,30 @@ class MainViewModel(
                     recentActivity = recentActivity
                 )
             )
+            val assistantReply = ChatTextSanitizer.cleanAssistantReply(response.reply)
+            val suggestedAction = ChatTextSanitizer.cleanShortText(response.suggestedAction, "继续温和陪伴")
+            val reason = ChatTextSanitizer.cleanShortText(response.reason, "support_conversation")
             val updatedRisk = state.personalizedRisk.copy(
                 riskLevel = response.riskLevel.toRiskLevel(),
-                suggestedAction = response.suggestedAction,
-                careMessage = response.reply,
+                suggestedAction = suggestedAction,
+                careMessage = assistantReply,
                 confidence = response.confidence,
-                guardianTriggerReason = if (response.shouldNotifyGuardian) response.reason else state.personalizedRisk.guardianTriggerReason
+                guardianTriggerReason = if (response.shouldNotifyGuardian) reason else state.personalizedRisk.guardianTriggerReason
             )
             habitRepository.saveConversationSummary(
                 ConversationSummaryEntity(
                     timestamp = System.currentTimeMillis(),
                     riskLevel = response.riskLevel,
                     emotionalLabel = state.lastUserEmotionLabel,
-                    summary = CompanionContextBuilder.summarizeConversation(trimmed, response.reply, recentActivity),
-                    suggestedAction = response.suggestedAction,
+                    summary = CompanionContextBuilder.summarizeConversation(trimmed, assistantReply, recentActivity),
+                    suggestedAction = suggestedAction,
                     shouldNotifyGuardian = response.shouldNotifyGuardian,
                     createdAt = System.currentTimeMillis()
                 )
             )
             _uiState.value = _uiState.value.copy(
                 personalizedRisk = updatedRisk,
-                supportMessages = pendingMessages + SupportMessage(fromUser = false, text = response.reply)
+                supportMessages = pendingMessages + SupportMessage(fromUser = false, text = assistantReply)
             )
         }
     }

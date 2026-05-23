@@ -34,7 +34,7 @@ class MockGuardianAgentApi : GuardianAgentApi {
             shouldNotifyGuardian = shouldNotify,
             thresholdAdjustments = thresholdAdjustmentsFor(request),
             confidence = if (request.currentBaseline.confidenceLevel == "high") 0.86f else 0.68f,
-            reason = "Mock Agent 基于近期特征、个人基线和当前阈值给出本地建议",
+            reason = "Mock Agent 基于近期特征、个人基线和当前阈值给出本地建议。",
             mainReasons = request.localEmotionGuess
                 ?.substringAfter("clues=", "")
                 ?.split("|")
@@ -48,7 +48,7 @@ class MockGuardianAgentApi : GuardianAgentApi {
                 ?.split("|")
                 ?.filter { it.isNotBlank() }
                 ?.take(4)
-                ?: listOf("结构化特征触发本地兜底"),
+                ?: listOf("结构化特征触发本地规则"),
             counterEvidence = request.dataLimits.take(3).ifEmpty { listOf("缺少 HRV 和睡眠等长期恢复指标") },
             uncertainty = "这是基于授权结构化数据的状态估计，不能确认具体原因。",
             supportStyle = if (request.latestRiskScore >= 0.55f) "grounding" else "observe",
@@ -68,7 +68,7 @@ class MockGuardianAgentApi : GuardianAgentApi {
                 "deleteRateWarning" to request.currentThresholds.deleteRateWarning * multiplier,
                 "pauseDurationWarning" to request.currentThresholds.pauseDurationWarning * multiplier
             ),
-            reason = "根据近期误报/有帮助反馈微调提醒敏感度",
+            reason = "根据近期误报和有帮助反馈，微调提醒敏感度。",
             confidence = 0.72f
         )
     }
@@ -92,7 +92,7 @@ class MockGuardianAgentApi : GuardianAgentApi {
             suggestedAction = actionFor(riskLevel),
             shouldNotifyGuardian = riskLevel == "guardian_check" || riskLevel == "urgent_support",
             confidence = 0.68f,
-            reason = "Mock Agent 根据用户主动回复进行温和追问和风险复核"
+            reason = "Mock Agent 根据用户主动回复进行温和追问和状态复核。"
         )
     }
 
@@ -126,9 +126,9 @@ class MockGuardianAgentApi : GuardianAgentApi {
         request.localEmotionGuess
             ?.substringAfter("primary=", "")
             ?.substringBefore(";")
-            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { it.isNotBlank() && !ChatTextSanitizer.looksCorrupted(it) }
             ?: when {
-                request.latestRiskScore >= 0.72f -> "烦躁"
+                request.latestRiskScore >= 0.72f -> "焦躁"
                 request.latestRiskScore >= 0.55f -> "紧张"
                 request.latestRiskScore >= 0.35f -> "压力偏高"
                 else -> "平静"
@@ -139,12 +139,12 @@ class MockGuardianAgentApi : GuardianAgentApi {
             ?.substringAfter("candidates=", "")
             ?.substringBefore(";confidence=", "")
             ?.split("|")
-            ?.filter { it.isNotBlank() && it != mockEmotionFor(request) }
+            ?.filter { it.isNotBlank() && it != mockEmotionFor(request) && !ChatTextSanitizer.looksCorrupted(it) }
             ?.take(3)
             ?: emptyList()
 
     private fun mockFamilyFor(request: AgentSignalRequest): String = when (mockEmotionFor(request)) {
-        "烦躁", "紧张", "压力偏高" -> "高唤醒负向"
+        "焦躁", "紧张", "压力偏高" -> "高唤醒负向"
         "疲惫", "低落", "孤独", "空落" -> "低唤醒负向"
         "积极活跃" -> "高唤醒正向"
         "平静", "轻松" -> "低唤醒正向"

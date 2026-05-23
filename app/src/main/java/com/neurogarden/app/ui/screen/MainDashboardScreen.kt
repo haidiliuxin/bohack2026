@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.neurogarden.app.agent.ChatTextSanitizer
 import com.neurogarden.app.algorithm.CareMode
 import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
@@ -1019,7 +1020,7 @@ private fun ChatTab(
                         .background(Color.White)
                         .padding(horizontal = 22.dp, vertical = 10.dp)
                 ) {
-                    Text("璇濊亰鍔╂墜", color = NeuroColors.Blue, fontWeight = FontWeight.Bold)
+                    Text("NeuroGarden", color = NeuroColors.Blue, fontWeight = FontWeight.Bold)
                 }
                 MindfulnessIcon(onClick = { onMindfulnessChange(true) })
             }
@@ -1032,18 +1033,18 @@ private fun ChatTab(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     realtime.supportMessages.forEach { message ->
-                        ChatBubble(fromUser = message.fromUser, text = message.text)
+                        ChatBubble(fromUser = message.fromUser, text = ChatTextSanitizer.cleanAssistantReply(message.text))
                     }
                 }
             } else {
                 Text(
-                    "鎴戝湪杩欓噷銆備綘鍙互鍙涓€鍙ョ幇鍦ㄧ殑鎰熻銆?",
+                    "可以从一句很短的话开始。这里不会保存被动采集到的输入原文。",
                     color = NeuroColors.TextMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
             Text(
-                "褰撳墠妯″紡锛?{careMode.toModeLabel()}",
+                "当前模式：${careMode.toModeLabel()}",
                 color = NeuroColors.TextMuted,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 8.dp)

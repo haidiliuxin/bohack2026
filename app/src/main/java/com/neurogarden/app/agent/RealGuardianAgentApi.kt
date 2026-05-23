@@ -279,12 +279,12 @@ class RealGuardianAgentApi : GuardianAgentApi {
                 )
             }
         return SupportConversationResponse(
-            reply = json.optString("reply", "我在。先慢慢呼一口气，我们一点点来。").take(300),
+            reply = ChatTextSanitizer.cleanAssistantReply(json.optString("reply", "我在。先慢慢呼一口气，我们一点点来。")).take(300),
             riskLevel = json.optString("riskLevel", fallbackLevel),
-            suggestedAction = json.optString("suggestedAction", "继续温和陪伴").take(120),
+            suggestedAction = ChatTextSanitizer.cleanShortText(json.optString("suggestedAction", "继续温和陪伴"), "继续温和陪伴").take(120),
             shouldNotifyGuardian = json.optBoolean("shouldNotifyGuardian", false),
             confidence = json.optDouble("confidence", 0.65).toFloat().coerceIn(0f, 1f),
-            reason = json.optString("reason", "psychological_companion_skill").take(160)
+            reason = ChatTextSanitizer.cleanShortText(json.optString("reason", "psychological_companion_skill"), "psychological_companion_skill").take(160)
         )
     }
 }
