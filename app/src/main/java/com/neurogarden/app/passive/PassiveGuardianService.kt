@@ -119,8 +119,10 @@ class PassiveGuardianService : Service() {
             agentResponse = agent,
             weather = weather.eventLabel()
         )
+
         val combinedAlert = combinedAlertFor(interaction, watchPacket, interactionRisk, physiologyRisk)
         val reason = explainEvaluation(interaction, watchPacket, interactionRisk, physiologyRisk, combinedAlert, quality.qualityLevel)
+        val notificationPlan = notificationPlanFor(mode, combinedAlert ?: risk.careMessage)
 
         PassiveDebugStore.save(
             this,
@@ -140,10 +142,18 @@ class PassiveGuardianService : Service() {
             )
         )
 
+        if (combinedAlert != null && quality.qualityLevel != "low") {
+            PendingPassiveAlertStore.save(
+                context = this,
+                title = notificationPlan.title,
+                message = notificationPlan.message,
+                now = now
+            )
+        }
+
         combinedAlertTicks = if (combinedAlert != null) combinedAlertTicks + 1 else 0
         elevatedTicks = if (risk.riskLevel >= RiskLevel.SUPPORT || trend.shouldIntervene) elevatedTicks + 1 else 0
 
-        val notificationPlan = notificationPlanFor(mode, combinedAlert ?: risk.careMessage)
         val maxDailyNotifications = when (mode) {
             CareMode.SELF_MONITORING -> 4
             else -> policy.maxDailyGuardianAlerts
@@ -206,7 +216,7 @@ class PassiveGuardianService : Service() {
         }
         if (typingReasons.isEmpty() || watchReasons.isEmpty()) return null
 
-        return "检测到${typingReasons.joinToString("、")}，同时${watchReasons.joinToString("、")}。这更像紧张/焦虑相关的状态偏离，要不要停十秒做一次慢呼吸？"
+        return "检测到${typingReasons.joinToString("、")}，同时${watchReasons.joinToString("、")}。这属于状态节律偏离，建议先暂停片刻并确认当前状态。"
     }
 
     private fun explainEvaluation(
@@ -239,12 +249,12 @@ class PassiveGuardianService : Service() {
         when (mode) {
             CareMode.SELF_MONITORING -> NotificationPlan(
                 title = "今日状态有些波动",
-                message = "今日状态波动较明显，建议稍后查看状态摘要。$detail"
+                message = "检测到节律波动较明显，建议稍后查看今日状态摘要。$detail"
             )
 
             CareMode.FAMILY_GUARDIAN -> NotificationPlan(
                 title = "建议进行一次状态确认",
-                message = "检测到用户状态持续偏离日常节奏，建议进行一次状态确认。$detail"
+                message = "检测到状态持续偏离日常节律，建议进行一次守护确认。$detail"
             )
 
             CareMode.SPECIAL_CARE -> NotificationPlan(
