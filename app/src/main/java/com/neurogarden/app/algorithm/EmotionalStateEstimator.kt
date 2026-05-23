@@ -43,7 +43,7 @@ object EmotionalStateEstimator {
         val quality = SignalQualityEvaluator.assess(sample, baseline, thresholds)
         if (!quality.baselineReady) {
             return EmotionalStateEstimate(
-                primaryState = "Learning baseline",
+                primaryState = "学习日常节奏中",
                 confidence = quality.qualityScore,
                 arousalScore = 0f,
                 valenceScore = 0f,
@@ -51,12 +51,12 @@ object EmotionalStateEstimator {
                 lonelinessScore = 0f,
                 stressScore = 0f,
                 interferenceReason = "baseline_not_ready",
-                explanation = "Not enough personal baseline samples for a clear judgment."
+                explanation = "个人基线样本还不够，暂时不做明确情绪判断。"
             )
         }
         if (quality.usableSignalCount < 2) {
             return EmotionalStateEstimate(
-                primaryState = "Insufficient signals",
+                primaryState = "信号不足",
                 confidence = quality.qualityScore,
                 arousalScore = 0f,
                 valenceScore = 0f,
@@ -64,7 +64,7 @@ object EmotionalStateEstimator {
                 lonelinessScore = 0f,
                 stressScore = 0f,
                 interferenceReason = "insufficient_signals",
-                explanation = "Fewer than two reliable signal groups are available."
+                explanation = "当前可靠信号组少于两个，只能继续观察。"
             )
         }
         val heartLift = ((sample.heartRate - baseline.avgRestingHeartRate) / thresholds.heartRateDeltaWarning).positiveClamp()
@@ -80,7 +80,8 @@ object EmotionalStateEstimator {
         val fatigue = (typingDrop * 0.34f + pauseLift * 0.36f + lowActivityWeight(sample) * 0.30f).clamp()
         val loneliness = (pauseLift * 0.42f + nightWeight(sample.timestamp) * 0.28f + typingDrop * 0.30f).clamp()
         val stress = (heartLift * 0.30f + breathLift * 0.25f + deleteLift * 0.25f + pauseLift * 0.20f).clamp()
-        val valence = (0.5f - fatigue * 0.28f - loneliness * 0.22f - stress * 0.18f).coerceIn(-1f, 1f)
+        val calmLift = (1f - stress).coerceIn(0f, 1f) * 0.18f
+        val valence = (0.62f + calmLift - fatigue * 0.30f - loneliness * 0.24f - stress * 0.28f).coerceIn(-1f, 1f)
 
         val primary = when {
             motionInterference -> "运动干扰"
@@ -90,6 +91,10 @@ object EmotionalStateEstimator {
             fatigue >= 0.55f -> "疲惫恢复慢"
             loneliness >= 0.58f -> "可能需要陪伴"
             stress >= 0.45f -> "轻微压力偏离"
+            arousal in 0.34f..0.62f && stress < 0.34f && fatigue < 0.46f && typingRush in 0.08f..0.52f -> "积极活跃"
+            arousal in 0.20f..0.52f && stress < 0.30f && fatigue < 0.36f && pauseLift < 0.45f -> "平静专注"
+            arousal < 0.26f && stress < 0.28f && fatigue < 0.42f -> "轻松平稳"
+            fatigue in 0.34f..0.54f && stress < 0.35f && loneliness < 0.48f -> "安静恢复"
             else -> "相对稳定"
         }
         val rawConfidence = when {
@@ -130,7 +135,13 @@ object EmotionalStateEstimator {
             if (typingDelta > 0.25f) add("输入节奏偏急")
         }
         return if (reasons.isEmpty()) {
-            "当前信号接近日常基线，暂不主动打扰。"
+            when (primary) {
+                "积极活跃" -> "当前节奏略有活跃，但心率、呼吸和修改频率仍在可接受范围内。"
+                "平静专注" -> "当前信号接近日常基线，节奏较平稳，适合继续当前活动。"
+                "轻松平稳" -> "当前生理和输入节奏都比较舒缓，系统会保持低打扰。"
+                "安静恢复" -> "当前更像低刺激恢复状态，适合保留一点休息空间。"
+                else -> "当前信号接近日常基线，暂不主动打扰。"
+            }
         } else {
             "更像$primary：${reasons.joinToString("、")}。"
         }

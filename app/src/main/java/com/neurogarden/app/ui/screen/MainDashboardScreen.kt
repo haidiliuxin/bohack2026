@@ -463,13 +463,15 @@ private fun EmotionalStateCard(realtime: RealtimeUiState) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("当前识别的情绪状态", style = MaterialTheme.typography.titleMedium)
-            Text("${emotion.primaryState} / 置信度 ${"%.0f".format(emotion.confidence * 100)}%")
+            Text("当前识别：${emotion.primaryState}", style = MaterialTheme.typography.titleLarge)
+            Text("情绪族群：${emotion.emotionFamilyLabel()} / 置信度 ${"%.0f".format(emotion.confidence * 100)}%")
             Text(emotion.explanation)
             emotion.interferenceReason?.let { Text(it) }
             Text(
-                "紧张 ${emotion.arousalScore.toPercentText()} · 压力 ${emotion.stressScore.toPercentText()} · " +
+                "心情倾向 ${emotion.valenceScore.toValenceText()} · 唤醒 ${emotion.arousalScore.toPercentText()} · 压力 ${emotion.stressScore.toPercentText()} · " +
                     "疲惫 ${emotion.fatigueScore.toPercentText()} · 陪伴需求 ${emotion.lonelinessScore.toPercentText()}"
             )
+            Text("可能伴随：${emotion.possibleCompanionStates().joinToString("、")}")
             Text("情绪不是简单好坏二分；这里展示的是多维状态估计，不是医学诊断。")
         }
     }
@@ -1038,6 +1040,41 @@ private fun Float.signedPercent(): String =
 
 private fun Float.toPercentText(): String =
     "${"%.0f".format((this * 100f).coerceIn(0f, 100f))}%"
+
+private fun Float.toValenceText(): String {
+    val value = coerceIn(-1f, 1f)
+    val label = when {
+        value >= 0.45f -> "偏舒展"
+        value >= 0.15f -> "偏平稳"
+        value > -0.15f -> "中性"
+        value > -0.45f -> "偏低"
+        else -> "明显偏低"
+    }
+    return "$label ${"%.0f".format(((value + 1f) / 2f) * 100)}%"
+}
+
+private fun com.neurogarden.app.algorithm.EmotionalStateEstimate.emotionFamilyLabel(): String =
+    when (primaryState) {
+        "平静专注", "轻松平稳", "积极活跃", "安静恢复", "相对稳定" -> "正向或中性状态"
+        "轻微压力偏离", "高压紧张", "焦虑紧绷" -> "高唤醒压力状态"
+        "疲惫恢复慢", "低落疲惫", "可能需要陪伴" -> "低能量或陪伴需求"
+        "学习日常节奏中", "学习中", "信号不足", "运动干扰" -> "暂不确定"
+        else -> "复合状态"
+    }
+
+private fun com.neurogarden.app.algorithm.EmotionalStateEstimate.possibleCompanionStates(): List<String> {
+    val states = buildList {
+        if (arousalScore >= 0.55f) add("紧绷")
+        if (stressScore >= 0.45f) add("压力")
+        if (fatigueScore >= 0.48f) add("疲惫")
+        if (lonelinessScore >= 0.48f) add("需要陪伴")
+        if (valenceScore >= 0.45f && stressScore < 0.35f) add("轻松")
+        if (arousalScore in 0.25f..0.62f && stressScore < 0.38f) add("专注")
+        if (arousalScore in 0.35f..0.70f && valenceScore >= 0.30f) add("活跃")
+        if (fatigueScore in 0.30f..0.55f && stressScore < 0.40f) add("恢复中")
+    }.distinct()
+    return states.ifEmpty { listOf("继续观察") }.take(4)
+}
 
 private fun heartRateSource(state: RealtimeUiState): String =
     if (state.bodyState.contains("Wear OS") || state.bodyState.contains("实时采集")) "Real" else "Mock"

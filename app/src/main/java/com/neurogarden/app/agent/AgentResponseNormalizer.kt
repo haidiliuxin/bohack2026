@@ -32,7 +32,7 @@ object AgentResponseNormalizer {
         return AgentSignalResponse(
             riskScore = riskScore100 / 100f,
             riskLevel = normalizedState.toLegacyRiskLevel(fallbackRiskLevel),
-            emotionalState = normalizedState,
+            emotionalState = emotionalLabelFor(json, normalizedState),
             suggestedAction = sanitizeShortText(
                 json.optString("suggestedAction", "建议查看状态偏离详情并继续观察。")
             ),
@@ -80,6 +80,21 @@ object AgentResponseNormalizer {
             else -> "unknown"
         }
         return if (mapped in allowedStates) mapped else "unknown"
+    }
+
+    private fun emotionalLabelFor(json: JSONObject, normalizedState: String): String {
+        val explicit = sanitizeShortText(json.optString("emotionalState")).takeIf {
+            it.isNotBlank() && it != "结构化特征触发本地安全兜底"
+        }
+        if (explicit != null) return explicit.take(24)
+        return when (normalizedState) {
+            "stable" -> "相对稳定"
+            "mild_fluctuation" -> "轻微波动"
+            "observe" -> "需要观察"
+            "needs_confirmation" -> "需要确认"
+            "focus_attention" -> "重点关注"
+            else -> "状态不明"
+        }
     }
 
     private fun String.toLegacyRiskLevel(fallback: String): String = when (this) {

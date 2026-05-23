@@ -18,6 +18,7 @@ class RealGuardianAgentApi : GuardianAgentApi {
             but treat them as weak signals. Prefer uncertainty over overclaiming.
             Return JSON only with these fields:
             state: stable|mild_fluctuation|observe|needs_confirmation|focus_attention|unknown
+            emotionalState: short Chinese label such as 平静专注|轻松平稳|积极活跃|安静恢复|疲惫恢复慢|高压紧张|焦虑紧绷|低落疲惫|可能需要陪伴|相对稳定
             riskScore: 0-100
             confidence: 0.0-1.0
             mainReasons: string array, max 3
