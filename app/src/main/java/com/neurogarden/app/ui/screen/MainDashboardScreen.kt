@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +61,7 @@ enum class MainTab(val title: String) {
     TODAY("今日"),
     HISTORY("历史"),
     GUARDIAN("守护"),
+    CHAT("聊天"),
     SETTINGS("设置")
 }
 
@@ -104,7 +106,8 @@ fun MainDashboardScreen(
     val selectedEvent = selectedEventState?.value
     val latestEvent = todayRiskEvents.firstOrNull() ?: recentRiskEvents.firstOrNull()
     val alertEvent = latestEvent?.takeIf {
-        it.id != dismissedAlertEventId &&
+        tab == MainTab.TODAY &&
+            it.id != dismissedAlertEventId &&
             selectedEventId == null &&
             System.currentTimeMillis() - dismissedAlertAt >= 15L * 60L * 1000L &&
             DiscomfortBoundaryCalculator.shouldShowPopup(it.riskScore, careMode, todaySummary.dataQualityLevel) &&
@@ -177,6 +180,14 @@ fun MainDashboardScreen(
                         }
                     )
 
+                    MainTab.CHAT -> SupportChatScreen(
+                        realtime = realtime,
+                        latestEvent = latestEvent,
+                        careMode = careMode,
+                        onBeginSupportConversation = onBeginSupportConversation,
+                        onSendSupportReply = onSendSupportReply
+                    )
+
                     MainTab.SETTINGS -> SettingsDashboardScreen(
                         realtime = realtime,
                         settings = guardianSettings,
@@ -211,9 +222,12 @@ fun MainDashboardScreen(
                 selectedEventId = event.id
                 tab = MainTab.TODAY
             },
-            supportMessages = realtime.supportMessages,
-            onBeginSupportConversation = onBeginSupportConversation,
-            onSendSupportReply = onSendSupportReply,
+            onOpenChat = {
+                dismissedAlertEventId = event.id
+                dismissedAlertAt = System.currentTimeMillis()
+                onBeginSupportConversation()
+                tab = MainTab.CHAT
+            },
             onSafe = {
                 dismissedAlertEventId = event.id
                 dismissedAlertAt = System.currentTimeMillis()
@@ -223,6 +237,8 @@ fun MainDashboardScreen(
                 dismissedAlertEventId = event.id
                 dismissedAlertAt = System.currentTimeMillis()
                 onFeedback("我需要陪伴")
+                onBeginSupportConversation()
+                tab = MainTab.CHAT
             }
         )
     }
@@ -244,16 +260,12 @@ fun MainDashboardScreen(
 private fun GentleRiskAlertDialog(
     event: RiskEventEntity,
     careMode: CareMode,
-    supportMessages: List<SupportMessage>,
     onDismiss: () -> Unit,
     onOpenEvent: () -> Unit,
-    onBeginSupportConversation: () -> Unit,
-    onSendSupportReply: (String) -> Unit,
+    onOpenChat: () -> Unit,
     onSafe: () -> Unit,
     onNeedCompanion: () -> Unit
 ) {
-    var chatOpen by remember { mutableStateOf(false) }
-    var draft by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("检测到状态波动") },
@@ -262,41 +274,11 @@ private fun GentleRiskAlertDialog(
                 Text("我注意到你的节奏和日常相比有些不一样。你不用解释原因，我们可以先轻轻确认一下。")
                 Text("当前：${event.riskLevel.toRiskLabel(careMode)} / 评分 ${"%.2f".format(event.riskScore)}")
                 Text(event.reasonList().take(2).joinToString("；"))
-                if (chatOpen) {
-                    supportMessages.forEach { message ->
-                        Text(if (message.fromUser) "你：${message.text}" else "NeuroGarden：${message.text}")
-                    }
-                    TextField(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        label = { Text("可以只说一个词，也可以跳过") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Button(
-                        onClick = {
-                            val message = draft.trim()
-                            if (message.isNotEmpty()) {
-                                onSendSupportReply(message)
-                                draft = ""
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("发送")
-                    }
-                }
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    if (!chatOpen) {
-                        chatOpen = true
-                        onBeginSupportConversation()
-                    }
-                }
-            ) {
-                Text(if (chatOpen) "弹窗陪伴中" else "和我聊聊")
+            TextButton(onClick = onOpenChat) {
+                Text("和我聊聊")
             }
         },
         dismissButton = {
@@ -364,6 +346,78 @@ private fun TodayMonitorScreen(
         }
         OutlinedButton(onClick = onNextScenario, modifier = Modifier.fillMaxWidth()) {
             Text("切换模拟监测状态")
+        }
+    }
+}
+
+@Composable
+private fun SupportChatScreen(
+    realtime: RealtimeUiState,
+    latestEvent: RiskEventEntity?,
+    careMode: CareMode,
+    onBeginSupportConversation: () -> Unit,
+    onSendSupportReply: (String) -> Unit
+) {
+    var draft by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        onBeginSupportConversation()
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("心理陪伴", style = MaterialTheme.typography.headlineMedium)
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("陪护说明", style = MaterialTheme.typography.titleMedium)
+                Text("当前 AI 陪护仍是演示版，能力很有限，不等同于心理咨询。所谓人设和人格模型只是参考情绪标注、近期异常、历史摘要和刚才行为数据做出的简单上下文，不代表 AI 真正理解了你。")
+                Text("如果当前对话显得机械或重复，请以结构化近况和呼吸引导为准；真正高风险情况应联系可信任的人或当地紧急帮助。")
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("当前近况", style = MaterialTheme.typography.titleMedium)
+                Text("状态：${realtime.emotionalState.primaryState} / 置信度 ${"%.0f".format(realtime.emotionalState.confidence * 100)}%")
+                Text("风险：${realtime.personalizedRisk.riskLevel.displayName} / ${"%.2f".format(realtime.personalizedRisk.riskScore)}")
+                Text("身体：心率 ${realtime.packet.heartRate}，呼吸 ${realtime.packet.breathRate}，运动 ${"%.2f".format(realtime.packet.motionLevel)}")
+                Text("节奏：${latestEvent?.reasonList()?.take(2)?.joinToString("；") ?: "暂无新的异常事件"}")
+                Text("模式：${careMode.toModeLabel()}")
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (realtime.supportMessages.isEmpty()) {
+                    Text("我在。你可以只说一个词，比如“累”“烦”“慌”或“还好”。")
+                } else {
+                    realtime.supportMessages.forEach { message ->
+                        Text(if (message.fromUser) "你：${message.text}" else "NeuroGarden：${message.text}")
+                    }
+                }
+                TextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    label = { Text("说一点现在的感觉") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = {
+                        val text = draft.trim()
+                        if (text.isNotEmpty()) {
+                            onSendSupportReply(text)
+                            draft = ""
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("发送")
+                }
+            }
         }
     }
 }

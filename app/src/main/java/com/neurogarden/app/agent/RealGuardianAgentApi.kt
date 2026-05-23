@@ -50,15 +50,43 @@ class RealGuardianAgentApi : GuardianAgentApi {
             suggestedAction = "继续观察"
         )
 
-    override suspend fun continueSupportConversation(request: SupportConversationRequest): SupportConversationResponse =
-        SupportConversationResponse(
-            reply = "当前版本不启用长对话，仅展示结构化监测和反馈闭环。",
-            riskLevel = request.currentRiskLevel,
-            suggestedAction = "查看状态偏离详情",
-            shouldNotifyGuardian = false,
-            confidence = 0.6f,
-            reason = "chat_disabled_for_guardian_monitoring"
-        )
+    override suspend fun continueSupportConversation(request: SupportConversationRequest): SupportConversationResponse {
+        val systemPrompt = """
+            You are NeuroGarden's psychological companion skill.
+            Role: a calm, non-clinical emotional support companion.
+            Goals: help the user slow down, name feelings gently, regain agency, and choose one tiny next step.
+            Use the provided structured context: recent activity, abnormal signals, and personality/care preferences.
+            Do not diagnose mental illness, do not claim certainty, do not mention raw passive text, and do not shame the user.
+            If the user says they are unsafe, cannot control themselves, or may hurt themselves/others, calmly suggest contacting a trusted person or local emergency help and set shouldNotifyGuardian=true.
+            Keep replies warm, concrete, and short: 2-5 Chinese sentences.
+            Return JSON only:
+            reply: string
+            riskLevel: stable|observe|support|guardian_check|urgent_support
+            suggestedAction: string
+            shouldNotifyGuardian: boolean
+            confidence: 0.0-1.0
+            reason: string
+        """.trimIndent()
+        val payload = JSONObject()
+            .put("currentRiskLevel", request.currentRiskLevel)
+            .put("currentRiskScore", request.currentRiskScore)
+            .put("userEmotionLabel", request.userEmotionLabel ?: JSONObject.NULL)
+            .put("recentRiskContext", request.recentRiskContext ?: JSONObject.NULL)
+            .put("personalityModel", request.personalityModel ?: JSONObject.NULL)
+            .put("recentActivity", request.recentActivity ?: JSONObject.NULL)
+            .put("recentSignals", JSONArray().also { array ->
+                request.recentSignals.take(8).forEach { array.put(it.toJson()) }
+            })
+            .put("conversation", JSONArray().also { array ->
+                request.conversation.takeLast(10).forEach {
+                    array.put(JSONObject().put("role", it.role).put("content", it.content))
+                }
+            })
+            .put("latestUserMessage", request.latestUserMessage)
+            .toString()
+        val text = requestText(systemPrompt, payload)
+        return parseSupportConversation(text, request.currentRiskLevel)
+    }
 
     private suspend fun requestText(systemPrompt: String, userPayload: String): String = withContext(Dispatchers.IO) {
         require(BuildConfig.GUARDIAN_API_KEY.isNotBlank() && BuildConfig.GUARDIAN_API_URL.isNotBlank()) {
@@ -179,4 +207,30 @@ class RealGuardianAgentApi : GuardianAgentApi {
             .put("userFeedback", userFeedback ?: JSONObject.NULL)
             .put("contextTag", contextTag)
             .put("riskLevel", riskLevel)
+
+    private fun parseSupportConversation(text: String, fallbackLevel: String): SupportConversationResponse {
+        val json = runCatching { JSONObject(text.trim()) }.getOrNull()
+            ?: runCatching {
+                val start = text.indexOf('{')
+                val end = text.lastIndexOf('}')
+                JSONObject(text.substring(start, end + 1))
+            }.getOrElse {
+                return SupportConversationResponse(
+                    reply = "我在。我们先把事情缩小一点：现在只需要慢慢呼一口气，然后告诉我身体哪里最紧。",
+                    riskLevel = fallbackLevel,
+                    suggestedAction = "继续温和陪伴",
+                    shouldNotifyGuardian = false,
+                    confidence = 0.55f,
+                    reason = "support_response_parse_failed"
+                )
+            }
+        return SupportConversationResponse(
+            reply = json.optString("reply", "我在。先慢慢呼一口气，我们一点点来。").take(300),
+            riskLevel = json.optString("riskLevel", fallbackLevel),
+            suggestedAction = json.optString("suggestedAction", "继续温和陪伴").take(120),
+            shouldNotifyGuardian = json.optBoolean("shouldNotifyGuardian", false),
+            confidence = json.optDouble("confidence", 0.65).toFloat().coerceIn(0f, 1f),
+            reason = json.optString("reason", "psychological_companion_skill").take(160)
+        )
+    }
 }

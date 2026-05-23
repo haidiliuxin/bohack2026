@@ -13,10 +13,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,8 +31,8 @@ import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
 import com.neurogarden.app.passive.PassiveGuardianService
-import com.neurogarden.app.passive.PendingPassiveAlert
 import com.neurogarden.app.passive.PendingPassiveAlertStore
+import com.neurogarden.app.passive.PassiveOverlayAlert
 import com.neurogarden.app.passive.WatchSignalSettings
 import com.neurogarden.app.passive.WatchSignalStore
 import com.neurogarden.app.ui.screen.DebugLogScreen
@@ -47,7 +44,6 @@ import com.neurogarden.app.viewmodel.TherapyViewModel
 import com.neurogarden.app.wear.WearCommandSender
 import com.neurogarden.shared.util.JsonUtil
 import com.neurogarden.shared.wear.WearPaths
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
@@ -78,6 +74,10 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
     override fun onResume() {
         super.onResume()
         runCatching { Wearable.getDataClient(this).addListener(this) }
+        PassiveOverlayAlert.dismiss(this)
+        PendingPassiveAlertStore.read(this)?.let { alert ->
+            PendingPassiveAlertStore.consume(this, alert.id)
+        }
     }
 
     override fun onPause() {
@@ -107,7 +107,6 @@ private fun NeuroGardenRoot(
     var guardianSettings by remember { mutableStateOf(GuardianSettings()) }
     var showDebugLog by remember { mutableStateOf(false) }
     var wearConnectionStatus by remember { mutableStateOf("未连接") }
-    var pendingPassiveAlert by remember { mutableStateOf<PendingPassiveAlert?>(null) }
     val realtime by mainViewModel.uiState.collectAsStateWithLifecycle()
     val todayRiskEvents by mainViewModel.todayRiskEvents.collectAsState(initial = emptyList())
     val recentRiskEvents by mainViewModel.recentRiskEvents.collectAsState(initial = emptyList())
@@ -132,15 +131,6 @@ private fun NeuroGardenRoot(
                 simulatedMotionLevel = guardianSettings.simulatedMotionLevel
             )
         )
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            PendingPassiveAlertStore.read(context.applicationContext)?.let { alert ->
-                pendingPassiveAlert = alert
-            }
-            delay(2_000L)
-        }
     }
 
     BackHandler(enabled = showDebugLog) {
@@ -236,24 +226,4 @@ private fun NeuroGardenRoot(
         }
     }
 
-    pendingPassiveAlert?.let { alert ->
-        AlertDialog(
-            onDismissRequest = {
-                PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
-                pendingPassiveAlert = null
-            },
-            title = { Text(alert.title) },
-            text = { Text(alert.message) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        PendingPassiveAlertStore.consume(context.applicationContext, alert.id)
-                        pendingPassiveAlert = null
-                    }
-                ) {
-                    Text("知道了")
-                }
-            }
-        )
-    }
 }

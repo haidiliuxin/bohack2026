@@ -52,7 +52,7 @@ class MockGuardianAgentApi : GuardianAgentApi {
             else -> request.currentRiskLevel
         }
         return SupportConversationResponse(
-            reply = gentleQuestionFor(riskLevel),
+            reply = gentleQuestionFor(riskLevel, request),
             riskLevel = riskLevel,
             suggestedAction = actionFor(riskLevel),
             shouldNotifyGuardian = riskLevel == "guardian_check" || riskLevel == "urgent_support",
@@ -87,10 +87,15 @@ class MockGuardianAgentApi : GuardianAgentApi {
         else -> "当前状态较稳定，继续保持舒服的节奏。"
     }
 
-    private fun gentleQuestionFor(riskLevel: String): String = when (riskLevel) {
-        "guardian_check", "urgent_support" -> "谢谢你告诉我。我们先不急着讲完整发生了什么，可以只回答一个很小的问题：你现在身边有可以联系的人吗？"
-        "support" -> "听起来今天有点不容易。你愿意用一句话告诉我，现在更像是累、烦，还是有点空落落吗？也可以不选。"
-        "observe" -> "收到。那我们先轻一点：现在身体哪里最紧，肩膀、胸口，还是胃部？如果不想说也没关系。"
-        else -> "我在。你可以简单说说此刻的感觉，或者只发一个词。"
+    private fun gentleQuestionFor(riskLevel: String, request: SupportConversationRequest): String {
+        val context = request.recentActivity?.takeIf { it.isNotBlank() }
+            ?: request.recentRiskContext?.takeIf { it.isNotBlank() }
+        val prefix = context?.let { "我看到刚才的状态记录是：$it。" }.orEmpty()
+        return prefix + when (riskLevel) {
+            "guardian_check", "urgent_support" -> "谢谢你告诉我。我们先不急着讲完整发生了什么，可以只回答一个很小的问题：你现在身边有可以联系的人吗？"
+            "support" -> "听起来今天有点不容易。你愿意用一句话告诉我，现在更像是累、烦，还是有点空落落吗？也可以不选。"
+            "observe" -> "收到。那我们先轻一点：现在身体哪里最紧，肩膀、胸口，还是胃部？如果不想说也没关系。"
+            else -> "我在。你可以简单说说此刻的感觉，或者只发一个词。"
+        }
     }
 }

@@ -534,6 +534,8 @@ class MainViewModel(
             _uiState.value = state.copy(supportMessages = pendingMessages)
 
             val recent = habitRepository.getRecentSamples(12)
+            val recentEvents = riskEventRepository.getTodayEvents(System.currentTimeMillis()).take(3)
+            val conversationSummaries = habitRepository.getRecentConversationSummaries(3)
             val response = guardianAgentApi.continueSupportConversation(
                 SupportConversationRequest(
                     userId = "local-demo-user",
@@ -547,7 +549,10 @@ class MainViewModel(
                         )
                     },
                     latestUserMessage = trimmed,
-                    userEmotionLabel = state.lastUserEmotionLabel
+                    userEmotionLabel = state.lastUserEmotionLabel,
+                    recentRiskContext = recentEvents.toSupportRiskContext(),
+                    personalityModel = buildCompanionPersonalityModel(state, conversationSummaries),
+                    recentActivity = recent.toRecentActivityContext()
                 )
             )
             val updatedRisk = state.personalizedRisk.copy(
@@ -1297,6 +1302,36 @@ class MainViewModel(
             else -> "继续轻柔陪伴"
         }
         return "$userTone；$action。"
+    }
+
+    private fun List<RiskEventEntity>.toSupportRiskContext(): String =
+        if (isEmpty()) {
+            "今天暂无明确异常事件。"
+        } else {
+            joinToString("；") { event ->
+                "风险${"%.2f".format(event.riskScore)}，等级${event.riskLevel}，原因${event.mainReasons.replace("|", "、")}"
+            }
+        }
+
+    private fun List<HabitSampleEntity>.toRecentActivityContext(): String {
+        val latest = maxByOrNull { it.timestamp } ?: return "暂无近期结构化行为样本。"
+        return "刚才输入速度${"%.1f".format(latest.typingSpeed)}字/分，删除率${"%.2f".format(latest.deleteRate)}，停顿${"%.1f".format(latest.pauseDuration)}秒，心率${latest.heartRate}，呼吸${latest.breathRate}，运动干扰${"%.2f".format(latest.motionLevel)}。"
+    }
+
+    private fun buildCompanionPersonalityModel(
+        state: RealtimeUiState,
+        summaries: List<ConversationSummaryEntity>
+    ): String {
+        val preference = when (state.lastUserEmotionLabel) {
+            "累" -> "用户可能更需要省力、低要求、允许休息的回应。"
+            "烦" -> "用户可能更需要被接住情绪，少讲道理，先降低刺激。"
+            "低落" -> "用户可能更需要稳定陪伴和非常小的行动建议。"
+            "紧张" -> "用户可能更需要呼吸、落地感和安全确认。"
+            "没事" -> "用户倾向表达状态可控，回应要尊重自主性。"
+            else -> "用户偏好未知，采用温和、短句、非评判的陪护风格。"
+        }
+        val memory = summaries.joinToString("；") { it.summary }.ifBlank { "暂无历史对话摘要。" }
+        return "$preference 历史对话摘要：$memory"
     }
 
     class Factory(

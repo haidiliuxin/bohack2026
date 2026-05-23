@@ -106,7 +106,10 @@ data class SupportConversationRequest(
     val recentSignals: List<HabitSampleDto>,
     val conversation: List<SupportConversationMessageDto>,
     val latestUserMessage: String,
-    val userEmotionLabel: String? = null
+    val userEmotionLabel: String? = null,
+    val recentRiskContext: String? = null,
+    val personalityModel: String? = null,
+    val recentActivity: String? = null
 )
 
 data class SupportConversationResponse(
