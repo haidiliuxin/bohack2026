@@ -48,7 +48,9 @@ data class AgentSignalRequest(
     val userFeedback: String?,
     val userEmotionLabel: String? = null,
     val weather: String? = null,
-    val timeSegment: String? = null
+    val timeSegment: String? = null,
+    val personalityModel: String? = null,
+    val recentActivity: String? = null
 )
 
 data class AgentSignalResponse(

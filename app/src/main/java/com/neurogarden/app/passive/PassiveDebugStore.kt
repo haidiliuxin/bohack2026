@@ -14,6 +14,7 @@ data class PassiveDebugSnapshot(
     val physiologyRisk: Float,
     val combinedRisk: Float,
     val alertAllowed: Boolean,
+    val lastAppCategory: String,
     val lastReason: String
 )
 
@@ -30,6 +31,7 @@ object PassiveDebugStore {
     private const val KEY_PHYSIOLOGY_RISK = "physiology_risk"
     private const val KEY_COMBINED_RISK = "combined_risk"
     private const val KEY_ALERT_ALLOWED = "alert_allowed"
+    private const val KEY_LAST_APP_CATEGORY = "last_app_category"
     private const val KEY_REASON = "reason"
 
     fun save(context: Context, snapshot: PassiveDebugSnapshot) {
@@ -46,6 +48,7 @@ object PassiveDebugStore {
             .putFloat(KEY_PHYSIOLOGY_RISK, snapshot.physiologyRisk)
             .putFloat(KEY_COMBINED_RISK, snapshot.combinedRisk)
             .putBoolean(KEY_ALERT_ALLOWED, snapshot.alertAllowed)
+            .putString(KEY_LAST_APP_CATEGORY, snapshot.lastAppCategory)
             .putString(KEY_REASON, snapshot.lastReason)
             .apply()
     }
@@ -64,6 +67,7 @@ object PassiveDebugStore {
             physiologyRisk = prefs.getFloat(KEY_PHYSIOLOGY_RISK, 0f),
             combinedRisk = prefs.getFloat(KEY_COMBINED_RISK, 0f),
             alertAllowed = prefs.getBoolean(KEY_ALERT_ALLOWED, false),
+            lastAppCategory = prefs.getString(KEY_LAST_APP_CATEGORY, "unknown") ?: "unknown",
             lastReason = prefs.getString(KEY_REASON, "还没有后台评估记录") ?: "还没有后台评估记录"
         )
     }

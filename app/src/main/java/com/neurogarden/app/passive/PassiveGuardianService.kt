@@ -12,6 +12,7 @@ import android.os.IBinder
 import com.neurogarden.app.MainActivity
 import com.neurogarden.app.NeuroGardenApp
 import com.neurogarden.app.agent.AgentSignalRequest
+import com.neurogarden.app.agent.CompanionContextBuilder
 import com.neurogarden.app.agent.toDto
 import com.neurogarden.app.algorithm.CareMode
 import com.neurogarden.app.algorithm.CareModePolicies
@@ -69,6 +70,7 @@ class PassiveGuardianService : Service() {
         val mode = app.careModeStore.currentModeSnapshot()
         val policy = CareModePolicies.policyFor(mode)
         val interaction = AccessibilitySignalStore.snapshotAndReset(this, now)
+        val appCategory = AccessibilitySignalStore.lastAppCategory(this)
         val watchPacket = WatchSignalStore.currentPacket(this, now)
         val interactionRisk = interactionRisk(interaction)
         val physiologyRisk = watchPacket?.let { physiologyRisk(it) } ?: 0f
@@ -83,7 +85,11 @@ class PassiveGuardianService : Service() {
             deleteRate = interaction.deleteRate,
             pauseDuration = interaction.pauseDuration,
             userFeedback = null,
-            contextTag = if (watchPacket == null) "typing_without_watch" else "typing_with_watch",
+            contextTag = if (watchPacket == null) {
+                "typing_without_watch_$appCategory"
+            } else {
+                "typing_with_watch_$appCategory"
+            },
             riskLevel = "observe",
             createdAt = now
         )
@@ -95,6 +101,16 @@ class PassiveGuardianService : Service() {
         val thresholds = app.habitRepository.getLatestThresholdProfile()
             ?: HabitLearningEngine.buildThresholdProfile(baseline, now)
         val weather = app.weatherRepository.current()
+        val todayEvents = app.riskEventRepository.getTodayEvents(now)
+        val recentFeedback = app.habitRepository.getRecentFeedbackRecords(12)
+        val conversationSummaries = app.habitRepository.getRecentConversationSummaries(6)
+        val recentActivity = CompanionContextBuilder.buildRecentActivity(samples.take(20), todayEvents.take(3))
+        val personalityModel = CompanionContextBuilder.buildPersonalityModel(
+            feedbacks = recentFeedback,
+            summaries = conversationSummaries,
+            samples = samples.take(20),
+            lastEmotionLabel = null
+        )
         val agent = app.guardianAgentApi.analyzeSignals(
             AgentSignalRequest(
                 userId = "local-demo-user",
@@ -105,12 +121,13 @@ class PassiveGuardianService : Service() {
                 latestRiskLevel = "observe",
                 userFeedback = null,
                 weather = weather.eventLabel(),
-                timeSegment = now.timeSegment()
+                timeSegment = now.timeSegment(),
+                personalityModel = personalityModel,
+                recentActivity = recentActivity
             )
         )
         val risk = PersonalizedRiskCalculator.calculate(sample, baseline, thresholds, agent, samples)
         val trend = TrendAnalyzer.analyze(samples, now)
-        val todayEvents = app.riskEventRepository.getTodayEvents(now)
         val quality = DataQualityEvaluator.evaluate(samples, emptyList(), todayEvents, baseline)
         app.riskEventRepository.recordIfNeeded(
             sample = sample,
@@ -138,6 +155,7 @@ class PassiveGuardianService : Service() {
                 physiologyRisk = physiologyRisk,
                 combinedRisk = combinedRisk,
                 alertAllowed = combinedAlert != null && quality.qualityLevel != "low",
+                lastAppCategory = appCategory,
                 lastReason = reason
             )
         )

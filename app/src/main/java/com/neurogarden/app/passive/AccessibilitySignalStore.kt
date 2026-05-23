@@ -17,7 +17,8 @@ data class AccessibilityDebugSnapshot(
     val lastEventAt: Long,
     val lastFlushAt: Long,
     val lastDelta: Int,
-    val lastEventType: Int
+    val lastEventType: Int,
+    val lastAppCategory: String
 )
 
 data class TypingFeatureStatus(
@@ -35,6 +36,7 @@ object AccessibilitySignalStore {
     private const val KEY_LAST_FLUSH_AT = "last_flush_at"
     private const val KEY_LAST_DELTA = "last_delta"
     private const val KEY_LAST_EVENT_TYPE = "last_event_type"
+    private const val KEY_LAST_APP_CATEGORY = "last_app_category"
     private const val KEY_SAMPLE_DAY = "sample_day"
     private const val KEY_TODAY_SAMPLE_COUNT = "today_sample_count"
     private const val SERVICE_CONNECTED_EVENT = -100
@@ -54,7 +56,8 @@ object AccessibilitySignalStore {
         removedCount: Int,
         fallbackDelta: Int,
         eventType: Int,
-        eventTime: Long
+        eventTime: Long,
+        packageName: String? = null
     ) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val typed = prefs.getInt(KEY_TYPED_COUNT, 0)
@@ -79,6 +82,7 @@ object AccessibilitySignalStore {
             .putLong(KEY_LAST_EVENT_AT, eventTime)
             .putInt(KEY_LAST_DELTA, typedDelta - deletedDelta)
             .putInt(KEY_LAST_EVENT_TYPE, eventType)
+            .putString(KEY_LAST_APP_CATEGORY, packageName.toAppCategory())
             .putInt(KEY_SAMPLE_DAY, currentDay)
             .putInt(KEY_TODAY_SAMPLE_COUNT, todaySampleCount + if (hasFeatureDelta) 1 else 0)
             .apply()
@@ -95,11 +99,12 @@ object AccessibilitySignalStore {
         )
     }
 
-    fun recordRawEvent(context: Context, eventType: Int, eventTime: Long) {
+    fun recordRawEvent(context: Context, eventType: Int, eventTime: Long, packageName: String? = null) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putLong(KEY_LAST_EVENT_AT, eventTime)
             .putInt(KEY_LAST_EVENT_TYPE, eventType)
+            .putString(KEY_LAST_APP_CATEGORY, packageName.toAppCategory())
             .apply()
     }
 
@@ -133,9 +138,14 @@ object AccessibilitySignalStore {
             lastEventAt = prefs.getLong(KEY_LAST_EVENT_AT, 0L),
             lastFlushAt = prefs.getLong(KEY_LAST_FLUSH_AT, 0L),
             lastDelta = prefs.getInt(KEY_LAST_DELTA, 0),
-            lastEventType = prefs.getInt(KEY_LAST_EVENT_TYPE, 0)
+            lastEventType = prefs.getInt(KEY_LAST_EVENT_TYPE, 0),
+            lastAppCategory = prefs.getString(KEY_LAST_APP_CATEGORY, "unknown") ?: "unknown"
         )
     }
+
+    fun lastAppCategory(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_LAST_APP_CATEGORY, "unknown") ?: "unknown"
 
     fun status(context: Context, now: Long = System.currentTimeMillis()): TypingFeatureStatus {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -166,5 +176,18 @@ object AccessibilitySignalStore {
         val calendar = Calendar.getInstance()
         calendar.timeInMillis = timestamp
         return calendar.get(Calendar.YEAR) * 1000 + calendar.get(Calendar.DAY_OF_YEAR)
+    }
+
+    private fun String?.toAppCategory(): String {
+        val value = this?.lowercase().orEmpty()
+        return when {
+            value.isBlank() -> "unknown"
+            listOf("wechat", "qq", "telegram", "whatsapp", "discord", "message", "sms").any { value.contains(it) } -> "chat_app"
+            listOf("bilibili", "youtube", "tiktok", "douyin", "kuaishou", "video").any { value.contains(it) } -> "video_app"
+            listOf("chrome", "browser", "edge", "firefox", "webview").any { value.contains(it) } -> "browser_app"
+            listOf("game", "mihoyo", "tencent.tmgp").any { value.contains(it) } -> "game_app"
+            value.contains("launcher") -> "launcher"
+            else -> "other_app"
+        }
     }
 }

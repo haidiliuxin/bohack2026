@@ -66,6 +66,7 @@ fun DebugLogScreen(
             Text("当前窗口 deleteCount：${accessibility.deleteCount}")
             Text("最后 delta：${accessibility.lastDelta}")
             Text("最后事件类型：${accessibility.lastEventType}")
+            Text("最近操作场景：${accessibility.lastAppCategory}")
             Text("最后输入事件：${timeText(accessibility.lastEventAt)}")
             Text("上次后台读取：${timeText(accessibility.lastFlushAt)}")
         }
@@ -128,6 +129,7 @@ private fun PassiveDebugText(snapshot: PassiveDebugSnapshot) {
     Text("motionLevel：${"%.2f".format(snapshot.motionLevel)}")
     Text("physiologyRisk：${"%.2f".format(snapshot.physiologyRisk)}")
     Text("combinedRisk：${"%.2f".format(snapshot.combinedRisk)}")
+    Text("lastAppCategory：${snapshot.lastAppCategory}")
     Text("是否满足弹窗条件：${if (snapshot.alertAllowed) "是" else "否"}")
     Text("原因：${snapshot.lastReason}")
 }

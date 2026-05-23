@@ -21,7 +21,8 @@ class TypingFeatureAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val now = System.currentTimeMillis()
-        AccessibilitySignalStore.recordRawEvent(this, event.eventType, now)
+        val packageName = event.packageName?.toString()
+        AccessibilitySignalStore.recordRawEvent(this, event.eventType, now, packageName)
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) return
         if (event.isPassword) return
         val added = event.addedCount.coerceAtLeast(0)
@@ -34,7 +35,8 @@ class TypingFeatureAccessibilityService : AccessibilityService() {
                 removedCount = removed,
                 fallbackDelta = fallbackDelta,
                 eventType = event.eventType,
-                eventTime = now
+                eventTime = now,
+                packageName = packageName
             )
         }
     }

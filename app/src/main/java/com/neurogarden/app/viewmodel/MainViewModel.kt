@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.neurogarden.app.BuildConfig
 import com.neurogarden.app.agent.AgentSignalRequest
 import com.neurogarden.app.agent.AgentSignalResponse
+import com.neurogarden.app.agent.CompanionContextBuilder
 import com.neurogarden.app.agent.GuardianAgentApi
 import com.neurogarden.app.agent.SupportConversationMessageDto
 import com.neurogarden.app.agent.SupportConversationRequest
@@ -254,21 +255,29 @@ class MainViewModel(
     }
 
     fun beginSupportConversation() {
-        val state = _uiState.value
-        val opening = when (state.personalizedRisk.riskLevel) {
-            RiskLevel.URGENT_SUPPORT,
-            RiskLevel.GUARDIAN_CHECK -> "我在这里。你不用解释太多，只想先轻轻确认一下：你现在身边是安全的吗？"
-            RiskLevel.SUPPORT -> "我注意到你的节奏有点紧。现在更像是累、烦，还是有点空落落？不想选也没关系。"
-            RiskLevel.OBSERVE -> "我们先慢一点。此刻身体哪里最明显，肩膀、胸口，还是胃部？"
-            RiskLevel.STABLE -> "我在。你可以简单说一个词，描述现在的感觉。"
+        viewModelScope.launch {
+            val state = _uiState.value
+            if (state.supportMessages.isNotEmpty()) return@launch
+            val recent = habitRepository.getRecentSamples(20)
+            val recentEvents = riskEventRepository.getTodayEvents(System.currentTimeMillis()).take(3)
+            val feedbacks = habitRepository.getRecentFeedbackRecords(12)
+            val summaries = habitRepository.getRecentConversationSummaries(6)
+            val activity = CompanionContextBuilder.buildRecentActivity(recent, recentEvents)
+            val personality = CompanionContextBuilder.buildPersonalityModel(
+                feedbacks = feedbacks,
+                summaries = summaries,
+                samples = recent,
+                lastEmotionLabel = state.lastUserEmotionLabel
+            )
+            val opening = CompanionContextBuilder.openingFor(
+                currentRiskLevel = state.personalizedRisk.riskLevel.name.lowercase(),
+                recentActivity = activity,
+                personalityModel = personality
+            )
+            _uiState.value = state.copy(
+                supportMessages = listOf(SupportMessage(fromUser = false, text = opening))
+            )
         }
-        _uiState.value = state.copy(
-            supportMessages = if (state.supportMessages.isEmpty()) {
-                listOf(SupportMessage(fromUser = false, text = opening))
-            } else {
-                state.supportMessages
-            }
-        )
     }
 
     private fun recordHabitSample(sample: HabitSampleEntity, result: StressResult) {
@@ -302,6 +311,16 @@ class MainViewModel(
             if (latestThresholds == null || baseThresholds == learnedThresholds) {
                 habitRepository.saveThresholdProfile(baseThresholds)
             }
+            val todayEvents = riskEventRepository.getTodayEvents(now)
+            val recentFeedback = habitRepository.getRecentFeedbackRecords(12)
+            val conversationSummaries = habitRepository.getRecentConversationSummaries(6)
+            val recentActivity = CompanionContextBuilder.buildRecentActivity(samples.take(20), todayEvents.take(3))
+            val personalityModel = CompanionContextBuilder.buildPersonalityModel(
+                feedbacks = recentFeedback,
+                summaries = conversationSummaries,
+                samples = samples.take(20),
+                lastEmotionLabel = _uiState.value.lastUserEmotionLabel
+            )
             val agentRequest = AgentSignalRequest(
                 userId = "local-demo-user",
                 recentSignals = samples.take(12).map { it.toDto() },
@@ -312,7 +331,9 @@ class MainViewModel(
                 userFeedback = sample.userFeedback,
                 userEmotionLabel = _uiState.value.lastUserEmotionLabel,
                 weather = weather.eventLabel(),
-                timeSegment = now.timeSegment()
+                timeSegment = now.timeSegment(),
+                personalityModel = personalityModel,
+                recentActivity = recentActivity
             )
             val agentResponse = guardianAgentApi.analyzeSignals(agentRequest)
             agentAuditLogRepository.record(
@@ -325,7 +346,7 @@ class MainViewModel(
             val latestQuality = DataQualityEvaluator.evaluate(
                 habitSamples = samples.filter { it.timestamp >= now.startOfDay() },
                 sensorRecords = emptyList(),
-                riskEvents = riskEventRepository.getTodayEvents(now),
+                riskEvents = todayEvents,
                 baseline = baseline
             )
             val personalizedRisk = PersonalizedRiskCalculator.calculate(
@@ -335,7 +356,7 @@ class MainViewModel(
                 agentResponse = agentResponse,
                 recentSamples = samples
             )
-            val todayGuardianAlerts = riskEventRepository.getTodayEvents(now).count { it.guardianNotified }
+            val todayGuardianAlerts = todayEvents.count { it.guardianNotified }
             val modeAdjustedRisk = personalizedRisk.applyCareModeNotificationPolicy(policy, todayGuardianAlerts)
             riskEventRepository.recordIfNeeded(
                 sample = sample,
@@ -446,6 +467,17 @@ class MainViewModel(
             )
             habitRepository.saveThresholdProfile(currentThresholds.applyAdjustments(tuning.adjustedThresholds, tuning.reason, now))
             val feedbackSummary = habitRepository.getFeedbackAccuracySummary()
+            habitRepository.saveConversationSummary(
+                ConversationSummaryEntity(
+                    timestamp = now,
+                    riskLevel = state.personalizedRisk.riskLevel.name.lowercase(),
+                    emotionalLabel = state.lastUserEmotionLabel,
+                    summary = "用户反馈“${feedback.toUserLabel()}”，用于更新提醒接受度和陪伴偏好。",
+                    suggestedAction = tuning.reason,
+                    shouldNotifyGuardian = feedback == "我需要陪伴",
+                    createdAt = now
+                )
+            )
             _uiState.value = state.copy(
                 personalizedRisk = state.personalizedRisk.copy(
                     careMessage = when (feedback) {
@@ -513,6 +545,17 @@ class MainViewModel(
             )
             val feedbackSummary = habitRepository.getFeedbackAccuracySummary()
             val calibratedState = state.emotionalState.withUserLabel(label)
+            habitRepository.saveConversationSummary(
+                ConversationSummaryEntity(
+                    timestamp = now,
+                    riskLevel = state.personalizedRisk.riskLevel.name.lowercase(),
+                    emotionalLabel = label,
+                    summary = "用户主动标注当前感受为“$label”，作为后续人格心理模型的轻量记忆。",
+                    suggestedAction = "后续回应优先匹配该情绪下的陪伴风格",
+                    shouldNotifyGuardian = false,
+                    createdAt = now
+                )
+            )
             _uiState.value = state.copy(
                 emotionalState = calibratedState,
                 lastUserEmotionLabel = label,
@@ -533,9 +576,17 @@ class MainViewModel(
             val pendingMessages = state.supportMessages + userMessage
             _uiState.value = state.copy(supportMessages = pendingMessages)
 
-            val recent = habitRepository.getRecentSamples(12)
+            val recent = habitRepository.getRecentSamples(20)
             val recentEvents = riskEventRepository.getTodayEvents(System.currentTimeMillis()).take(3)
-            val conversationSummaries = habitRepository.getRecentConversationSummaries(3)
+            val conversationSummaries = habitRepository.getRecentConversationSummaries(6)
+            val feedbacks = habitRepository.getRecentFeedbackRecords(12)
+            val recentActivity = CompanionContextBuilder.buildRecentActivity(recent, recentEvents)
+            val personalityModel = CompanionContextBuilder.buildPersonalityModel(
+                feedbacks = feedbacks,
+                summaries = conversationSummaries,
+                samples = recent,
+                lastEmotionLabel = state.lastUserEmotionLabel
+            )
             val response = guardianAgentApi.continueSupportConversation(
                 SupportConversationRequest(
                     userId = "local-demo-user",
@@ -551,8 +602,8 @@ class MainViewModel(
                     latestUserMessage = trimmed,
                     userEmotionLabel = state.lastUserEmotionLabel,
                     recentRiskContext = recentEvents.toSupportRiskContext(),
-                    personalityModel = buildCompanionPersonalityModel(state, conversationSummaries),
-                    recentActivity = recent.toRecentActivityContext()
+                    personalityModel = personalityModel,
+                    recentActivity = recentActivity
                 )
             )
             val updatedRisk = state.personalizedRisk.copy(
@@ -567,7 +618,7 @@ class MainViewModel(
                     timestamp = System.currentTimeMillis(),
                     riskLevel = response.riskLevel,
                     emotionalLabel = state.lastUserEmotionLabel,
-                    summary = summarizeConversation(trimmed, response.reply),
+                    summary = CompanionContextBuilder.summarizeConversation(trimmed, response.reply, recentActivity),
                     suggestedAction = response.suggestedAction,
                     shouldNotifyGuardian = response.shouldNotifyGuardian,
                     createdAt = System.currentTimeMillis()

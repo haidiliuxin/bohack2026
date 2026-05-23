@@ -14,6 +14,8 @@ class RealGuardianAgentApi : GuardianAgentApi {
             You are NeuroGarden's structured state monitoring agent.
             Use only authorized structured features. Do not diagnose, do not infer diseases,
             do not predict extreme behavior, and do not save or request raw text.
+            Consider the user's evolving personality/care model and recent activity context,
+            but treat them as weak signals. Prefer uncertainty over overclaiming.
             Return JSON only with these fields:
             state: stable|mild_fluctuation|observe|needs_confirmation|focus_attention|unknown
             riskScore: 0-100
@@ -31,6 +33,8 @@ class RealGuardianAgentApi : GuardianAgentApi {
             .put("userFeedback", request.userFeedback ?: JSONObject.NULL)
             .put("weather", request.weather ?: JSONObject.NULL)
             .put("timeSegment", request.timeSegment ?: JSONObject.NULL)
+            .put("personalityModel", request.personalityModel ?: JSONObject.NULL)
+            .put("recentActivity", request.recentActivity ?: JSONObject.NULL)
             .put("baseline", request.currentBaseline.toJson())
             .put("thresholds", request.currentThresholds.toJson())
             .put("recentSignals", JSONArray().also { array ->
@@ -53,12 +57,19 @@ class RealGuardianAgentApi : GuardianAgentApi {
     override suspend fun continueSupportConversation(request: SupportConversationRequest): SupportConversationResponse {
         val systemPrompt = """
             You are NeuroGarden's psychological companion skill.
-            Role: a calm, non-clinical emotional support companion.
+            Role: a calm, non-clinical psychological first-aid companion. You can use
+            support skills such as validation, reflective listening, grounding, breathing,
+            cognitive defusion, and one tiny next step, but you are not a doctor.
             Goals: help the user slow down, name feelings gently, regain agency, and choose one tiny next step.
             Use the provided structured context: recent activity, abnormal signals, and personality/care preferences.
+            The recent activity explains what probably triggered the warning. Use it to be specific,
+            but do not list raw metrics unless the user asks.
             Do not diagnose mental illness, do not claim certainty, do not mention raw passive text, and do not shame the user.
+            Never repeat the same sentence pattern from the previous assistant message.
+            Acknowledge the user's latest words directly. Ask at most one gentle question.
+            Avoid saying "我看到刚才的状态记录是" or reciting heart rate / typing values.
             If the user says they are unsafe, cannot control themselves, or may hurt themselves/others, calmly suggest contacting a trusted person or local emergency help and set shouldNotifyGuardian=true.
-            Keep replies warm, concrete, and short: 2-5 Chinese sentences.
+            Keep replies warm, concrete, and short: 2-4 Chinese sentences.
             Return JSON only:
             reply: string
             riskLevel: stable|observe|support|guardian_check|urgent_support

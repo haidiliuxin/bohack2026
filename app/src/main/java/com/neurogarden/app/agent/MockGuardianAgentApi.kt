@@ -90,12 +90,18 @@ class MockGuardianAgentApi : GuardianAgentApi {
     private fun gentleQuestionFor(riskLevel: String, request: SupportConversationRequest): String {
         val context = request.recentActivity?.takeIf { it.isNotBlank() }
             ?: request.recentRiskContext?.takeIf { it.isNotBlank() }
-        val prefix = context?.let { "我看到刚才的状态记录是：$it。" }.orEmpty()
-        return prefix + when (riskLevel) {
-            "guardian_check", "urgent_support" -> "谢谢你告诉我。我们先不急着讲完整发生了什么，可以只回答一个很小的问题：你现在身边有可以联系的人吗？"
-            "support" -> "听起来今天有点不容易。你愿意用一句话告诉我，现在更像是累、烦，还是有点空落落吗？也可以不选。"
-            "observe" -> "收到。那我们先轻一点：现在身体哪里最紧，肩膀、胸口，还是胃部？如果不想说也没关系。"
+        val trigger = context
+            ?.substringAfter("线索：", context)
+            ?.substringBefore("。这些线索")
+            ?.take(72)
+            ?.takeIf { it.isNotBlank() }
+        val prefix = trigger?.let { "刚才的提醒大概和${it}有关，但这不代表我知道你具体经历了什么。" }.orEmpty()
+        val response = when (riskLevel) {
+            "guardian_check", "urgent_support" -> "谢谢你告诉我。我们先不急着讲完整发生了什么，你现在身边有可以联系的人吗？"
+            "support" -> "听起来这一阵确实不轻松。你可以只选一个词：更像累、烦、慌，还是空落落？"
+            "observe" -> "收到。那我们先把范围缩小一点：现在身体哪里最明显，肩膀、胸口，还是胃部？"
             else -> "我在。你可以简单说说此刻的感觉，或者只发一个词。"
         }
+        return listOf(prefix, response).filter { it.isNotBlank() }.joinToString("")
     }
 }
