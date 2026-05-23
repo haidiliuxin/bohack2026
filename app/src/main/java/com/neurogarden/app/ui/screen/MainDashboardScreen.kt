@@ -978,13 +978,19 @@ private fun ChatTab(
 ) {
     val score = riskToMoodScore(latestRiskScore(listOfNotNull(latestEvent), realtime))
     var draft by remember { mutableStateOf("") }
-    var showHistory by remember { mutableStateOf(false) }
     val density = LocalDensity.current
-    val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
-    val inputBottomPadding = if (keyboardVisible) 8.dp else 106.dp
+    val keyboardHeight = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+    val keyboardVisible = keyboardHeight > 0.dp
+    val inputBottomPadding = if (keyboardVisible) keyboardHeight + 8.dp else 106.dp
+    val contentBottomPadding = inputBottomPadding + 82.dp
+    val scrollState = rememberScrollState()
 
     LaunchedEffect(Unit) {
         onBeginSupportConversation()
+    }
+
+    LaunchedEffect(realtime.supportMessages.size, keyboardVisible) {
+        scrollState.animateScrollTo(scrollState.maxValue)
     }
 
     if (mindfulnessMode) {
@@ -992,58 +998,52 @@ private fun ChatTab(
         return
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = inputBottomPadding),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            CircleIconButton(text = "=", onClick = { showHistory = true })
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(Color.White)
-                    .padding(horizontal = 22.dp, vertical = 10.dp)
-            ) {
-                Text("话聊助手", color = NeuroColors.Blue, fontWeight = FontWeight.Bold)
-            }
-            MindfulnessIcon(onClick = { onMindfulnessChange(true) })
-        }
-
-        Column(
-            modifier = Modifier.weight(1f),
+                .verticalScroll(scrollState)
+                .padding(start = 22.dp, top = 42.dp, end = 22.dp, bottom = contentBottomPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            ParticleSphere(score = score, size = 260.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Spacer(Modifier.size(44.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Color.White)
+                        .padding(horizontal = 22.dp, vertical = 10.dp)
+                ) {
+                    Text("璇濊亰鍔╂墜", color = NeuroColors.Blue, fontWeight = FontWeight.Bold)
+                }
+                MindfulnessIcon(onClick = { onMindfulnessChange(true) })
+            }
+
+            Spacer(Modifier.height(if (keyboardVisible) 2.dp else 26.dp))
+            ParticleSphere(score = score, size = if (keyboardVisible) 178.dp else 260.dp)
             if (realtime.supportMessages.isNotEmpty()) {
-                Spacer(Modifier.height(20.dp))
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    realtime.supportMessages.takeLast(2).forEach { message ->
+                    realtime.supportMessages.forEach { message ->
                         ChatBubble(fromUser = message.fromUser, text = message.text)
                     }
                 }
             } else {
                 Text(
-                    "我在这里。你可以只说一句现在的感觉。",
+                    "鎴戝湪杩欓噷銆備綘鍙互鍙涓€鍙ョ幇鍦ㄧ殑鎰熻銆?",
                     color = NeuroColors.TextMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
             Text(
-                "当前模式：${careMode.toModeLabel()}",
+                "褰撳墠妯″紡锛?{careMode.toModeLabel()}",
                 color = NeuroColors.TextMuted,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 8.dp)
@@ -1059,106 +1059,14 @@ private fun ChatTab(
                     onSendSupportReply(text)
                     draft = ""
                 }
-            }
-        )
-        }
-
-        if (showHistory) {
-            ChatHistoryDrawer(
-                onDismiss = { showHistory = false },
-                onNewConversation = {
-                    draft = ""
-                    onBeginSupportConversation()
-                    showHistory = false
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun ChatHistoryDrawer(
-    onDismiss: () -> Unit,
-    onNewConversation: () -> Unit
-) {
-    Row(modifier = Modifier.fillMaxSize()) {
-        Column(
+            },
             modifier = Modifier
-                .width(304.dp)
-                .fillMaxHeight()
-                .background(Color.White)
-                .padding(start = 26.dp, top = 58.dp, end = 24.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    "历史记录",
-                    color = NeuroColors.TextPrimary,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = onDismiss) {
-                    Text("收起", color = NeuroColors.TextMuted)
-                }
-            }
-            NeuroPrimaryButton(
-                text = "新建对话",
-                onClick = onNewConversation,
-                modifier = Modifier.fillMaxWidth()
-            )
-            ChatHistoryGroup("今天", listOf("现在的感觉", "睡前放松一下"))
-            ChatHistoryGroup("本周", listOf("一次心率偏高后的对话", "复盘昨天的压力", "想做 1 分钟呼吸"))
-            ChatHistoryGroup("更早", listOf("家庭守护设置说明", "手表连接问题"))
-            Spacer(modifier = Modifier.weight(1f))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(NeuroColors.BlueSoft),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("林", color = NeuroColors.Blue, fontWeight = FontWeight.Bold)
-                }
-                Text("林林", color = NeuroColors.TextPrimary, fontWeight = FontWeight.SemiBold)
-                Spacer(modifier = Modifier.weight(1f))
-                Text("···", color = NeuroColors.TextMuted, fontSize = 24.sp)
-            }
-        }
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .background(Color.Black.copy(alpha = 0.30f))
-                .clickable(onClick = onDismiss)
+                .align(Alignment.BottomCenter)
+                .padding(start = 22.dp, end = 22.dp, bottom = inputBottomPadding)
         )
+
     }
 }
-
-@Composable
-private fun ChatHistoryGroup(title: String, items: List<String>) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(title, color = NeuroColors.TextMuted, style = MaterialTheme.typography.titleSmall)
-        items.forEach { item ->
-            Text(
-                item,
-                color = NeuroColors.TextPrimary,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { }
-                    .padding(vertical = 4.dp)
-            )
-        }
-    }
-}
-
 @Composable
 private fun MindfulnessMode(score: Int, onExit: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
@@ -1299,7 +1207,8 @@ private fun ChatBubble(fromUser: Boolean, text: String) {
 private fun ChatInputBar(
     value: String,
     onValueChange: (String) -> Unit,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     BasicTextField(
         value = value,
@@ -1309,7 +1218,7 @@ private fun ChatInputBar(
             color = NeuroColors.TextPrimary,
             fontSize = 17.sp
         ),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(58.dp)
             .shadow(18.dp, RoundedCornerShape(29.dp), clip = false)

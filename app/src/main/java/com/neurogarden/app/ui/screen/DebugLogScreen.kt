@@ -25,9 +25,9 @@ import androidx.compose.ui.unit.dp
 import com.neurogarden.app.data.local.AgentAuditLogEntity
 import com.neurogarden.app.passive.AccessibilitySignalStore
 import com.neurogarden.app.passive.NotificationPolicyStore
-import com.neurogarden.app.passive.PassiveOverlayAlert
 import com.neurogarden.app.passive.PassiveDebugSnapshot
 import com.neurogarden.app.passive.PassiveDebugStore
+import com.neurogarden.app.passive.PassiveOverlayAlert
 import com.neurogarden.app.passive.PendingPassiveAlertStore
 import com.neurogarden.app.passive.WatchSignalStore
 import kotlinx.coroutines.delay
@@ -53,7 +53,7 @@ fun DebugLogScreen(
             watchPacket = WatchSignalStore.currentPacket(context)
             pendingAlert = PendingPassiveAlertStore.read(context)
             notificationStatus = NotificationPolicyStore.status(context)
-            delay(1000)
+            delay(1000L)
         }
     }
 
@@ -65,15 +65,15 @@ fun DebugLogScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("采集日志", style = MaterialTheme.typography.headlineMedium)
-        Text("这个页面每秒刷新，用来确认输入节奏、手表/模拟手表、后台判断和 Agent 请求日志是否闭环。")
+        Text("采集 Debug", style = MaterialTheme.typography.headlineMedium)
+        Text("这个页面每秒刷新，用来确认输入节奏、手表/模拟手表、后台判断、弹窗和 Agent 请求是否闭环。")
 
         DebugCard("无障碍输入事件") {
             Text("当前窗口 typedCount：${accessibility.typedCount}")
             Text("当前窗口 deleteCount：${accessibility.deleteCount}")
             Text("最后 delta：${accessibility.lastDelta}")
             Text("最后事件类型：${accessibility.lastEventType}")
-            Text("最近操作场景：${accessibility.lastAppCategory}")
+            Text("最后 App 分类：${accessibility.lastAppCategory}")
             Text("最后输入事件：${timeText(accessibility.lastEventAt)}")
             Text("上次后台读取：${timeText(accessibility.lastFlushAt)}")
         }
@@ -97,22 +97,42 @@ fun DebugLogScreen(
             Text("待 App 内弹窗：${pendingAlert?.let { "${it.title} / ${timeText(it.createdAt)}" } ?: "无"}")
             Text("通知冷却剩余：${notificationStatus.cooldownRemainingMinutes} 分钟")
             Text("今日通知次数：${notificationStatus.countToday}/${notificationStatus.maxDaily}")
-            Text("通知现在可发送：${if (notificationStatus.canNotifyNow) "是" else "否"}")
+            Text("通知策略允许：${if (notificationStatus.canNotifyNow) "是" else "否"}")
+            OutlinedButton(
+                onClick = {
+                    val now = System.currentTimeMillis()
+                    val title = "开发者测试关怀弹窗"
+                    val message = "这是一条开发者工具手动触发的关怀弹窗，用于验证弹窗 UI、进入陪伴按钮和待处理提醒链路。"
+                    PendingPassiveAlertStore.save(
+                        context = context.applicationContext,
+                        title = title,
+                        message = message,
+                        now = now
+                    )
+                    if (PassiveOverlayAlert.canShow(context)) {
+                        PassiveOverlayAlert.show(context.applicationContext, title, message)
+                    }
+                    pendingAlert = PendingPassiveAlertStore.read(context.applicationContext)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("一键呼出关怀弹窗")
+            }
         }
 
         DebugCard("Agent 审计日志") {
             if (logs.isEmpty()) {
-                Text("暂无后端请求记录。启动联调演示或等待后台检测后会显示在这里。")
+                Text("暂无 Agent 请求记录。可先运行联调演示或等待后台监测触发。")
             } else {
                 logs.take(8).forEach { log ->
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("时间：${timeText(log.requestTime)} / 触发：${log.triggerReason}")
-                        Text("HTTP：${if (log.httpSuccess) "成功" else "失败或兜底"} / 状态：${log.responseEmotion}")
-                        Text("评分：${"%.2f".format(log.riskScore)} / 等级：${log.riskLevel} / 置信度：${"%.2f".format(log.confidence)}")
+                        Text("HTTP：${if (log.httpSuccess) "成功" else "失败"} / 状态：${log.responseEmotion}")
+                        Text("风险：${"%.2f".format(log.riskScore)} / 等级：${log.riskLevel} / 置信度：${"%.2f".format(log.confidence)}")
                         Text("Prompt：${log.promptVersion.ifBlank { "未记录" }}")
-                        Text("耗时：${log.latencyMs} ms / 请求摘要：${log.requestSummary.ifBlank { "未记录" }}")
+                        Text("耗时：${log.latencyMs} ms / 摘要：${log.requestSummary.ifBlank { "未记录" }}")
                         Text("原因：${log.mainReasons.ifBlank { "无" }}")
-                        Text("fallback：${if (log.fallbackUsed) log.fallbackReason ?: "已使用" else "否"} / cache：${if (log.cacheUsed) "是" else "否"}")
+                        Text("fallback：${if (log.fallbackUsed) log.fallbackReason ?: "已启用" else "否"} / cache：${if (log.cacheUsed) "是" else "否"}")
                     }
                 }
             }
