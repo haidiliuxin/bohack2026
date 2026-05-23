@@ -74,7 +74,7 @@ class PassiveGuardianService : Service() {
         val interaction = AccessibilitySignalStore.snapshotAndReset(this, now)
         val appCategory = AccessibilitySignalStore.lastAppCategory(this)
         val watchPacket = WatchSignalStore.currentPacket(this, now)
-        val interactionRisk = interactionRisk(interaction)
+        val interactionRisk = interactionRisk(interaction, appCategory)
         val physiologyRisk = watchPacket?.let { physiologyRisk(it) } ?: 0f
         val combinedRisk = (interactionRisk * 0.48f + physiologyRisk * 0.52f).coerceIn(0f, 1f)
 
@@ -225,12 +225,19 @@ class PassiveGuardianService : Service() {
         }
     }
 
-    private fun interactionRisk(signal: InteractionSignalSnapshot): Float {
+    private fun interactionRisk(signal: InteractionSignalSnapshot, appCategory: String): Float {
         val fastTyping = ((signal.typingSpeed - 120f) / 100f).coerceIn(0f, 1f)
         val slowTypingAfterInput = if (signal.typingSpeed in 1f..40f) 0.35f else 0f
         val deleteLift = (signal.deleteRate / 0.25f).coerceIn(0f, 1f)
         val pauseLift = (signal.pauseDuration / 12f).coerceIn(0f, 1f)
-        return min(1f, max(0f, fastTyping * 0.30f + slowTypingAfterInput + deleteLift * 0.35f + pauseLift * 0.35f))
+        val base = fastTyping * 0.30f + slowTypingAfterInput + deleteLift * 0.35f + pauseLift * 0.35f
+        val sceneFactor = when (appCategory) {
+            "chat_app" -> 1.10f
+            "video_app", "game_app" -> 0.72f
+            "browser_app" -> 0.90f
+            else -> 1.0f
+        }
+        return min(1f, max(0f, base * sceneFactor))
     }
 
     private fun physiologyRisk(packet: SensorPacket): Float {

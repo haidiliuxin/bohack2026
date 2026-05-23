@@ -16,13 +16,15 @@ data class CleanedSignalSnapshot(
     val localConfidence: Float,
     val observedClues: List<String>,
     val counterEvidence: List<String>,
-    val dataLimits: List<String>
+    val dataLimits: List<String>,
+    val sceneTag: String,
+    val contextHypotheses: List<String>
 ) {
     fun requestSummary(): String =
         "quality=$qualityLevel;motion=$motionInterference;local=$localPrimaryEmotion;missing=${missingFields.joinToString("|")};dev=${deviations.toCompactString()}"
 
     fun localEmotionSummary(): String =
-        "primary=$localPrimaryEmotion;candidates=${localCandidates.joinToString("|")};confidence=${"%.2f".format(localConfidence)};clues=${observedClues.joinToString("|")};limits=${dataLimits.joinToString("|")}"
+        "primary=$localPrimaryEmotion;candidates=${localCandidates.joinToString("|")};confidence=${"%.2f".format(localConfidence)};scene=$sceneTag;hypothesis=${contextHypotheses.joinToString("|")};clues=${observedClues.joinToString("|")};limits=${dataLimits.joinToString("|")}"
 }
 
 object SignalPreprocessor {
@@ -61,6 +63,10 @@ object SignalPreprocessor {
             cleaned.motionLevel >= 0.45f -> "medium"
             else -> "low"
         }
+        val scene = sceneFromContext(cleaned.contextTag)
+        val recent15m = recentSamples.filter { cleaned.timestamp - it.timestamp in 0..FIFTEEN_MINUTES_MS }
+        val appSwitchApprox = recent15m.map { sceneFromContext(it.contextTag) }.distinct().size
+        val sustainedUse = recent15m.size >= 8
         val usable = listOf(
             cleaned.heartRate > 0,
             cleaned.breathRate > 0,
@@ -89,18 +95,35 @@ object SignalPreprocessor {
             if (deleteLift > 0.48f) add("删除频率升高")
             if (pauseLift > 0.48f) add("停顿时长增加")
             if (night > 0.5f) add("发生在深夜或凌晨")
+            if (scene == "chat_app") add("最近处于聊天输入场景")
+            if (scene in listOf("video_app", "game_app")) add("最近处于娱乐或视频场景")
+            if (appSwitchApprox >= 3) add("短时间应用场景切换较多")
+            if (sustainedUse) add("近期连续使用时间偏长")
         }
         val counter = buildList {
             if (motionInterference != "low") add("运动干扰会降低心率证据权重")
             if (cleaned.heartRate == 0) add("缺少可用心率")
             if (cleaned.breathRate == 0) add("缺少可用呼吸")
             if (qualityLevel == "low") add("数据可信度较低")
+            if (scene in listOf("video_app", "game_app")) add("娱乐或游戏场景下心率与输入波动更容易被外部内容影响")
+            if (typingRush > 0.30f && deleteLift < 0.30f && pauseLift < 0.35f) add("高输入速度也可能来自专注投入")
             if (observed.isEmpty()) add("当前信号接近个人基线")
         }
-        val stress = (heartLift * 0.26f + breathLift * 0.22f + deleteLift * 0.28f + pauseLift * 0.24f)
+        val sceneStressFactor = when (scene) {
+            "chat_app" -> 1.10f
+            "video_app", "game_app" -> 0.78f
+            "browser_app" -> 0.92f
+            else -> 1.0f
+        }
+        val sceneFatigueBonus = when {
+            night > 0.5f && sustainedUse -> 0.14f
+            sustainedUse -> 0.08f
+            else -> 0f
+        }
+        val stress = ((heartLift * 0.26f + breathLift * 0.22f + deleteLift * 0.28f + pauseLift * 0.24f) * sceneStressFactor)
             .motionAdjusted(cleaned.motionLevel)
             .coerceIn(0f, 1f)
-        val fatigue = (typingDrop * 0.38f + pauseLift * 0.32f + night * 0.20f + lowActivity(cleaned) * 0.10f)
+        val fatigue = (typingDrop * 0.38f + pauseLift * 0.32f + night * 0.20f + lowActivity(cleaned) * 0.10f + sceneFatigueBonus)
             .coerceIn(0f, 1f)
         val arousal = (heartLift * 0.35f + breathLift * 0.25f + typingRush * 0.20f + deleteLift * 0.20f)
             .motionAdjusted(cleaned.motionLevel)
@@ -109,9 +132,11 @@ object SignalPreprocessor {
         val primary = when {
             qualityLevel == "low" -> "不确定"
             motionInterference == "high" -> "运动干扰"
+            scene in listOf("video_app", "game_app") && arousal >= 0.42f && stress < 0.50f -> "积极活跃"
+            typingRush > 0.30f && deleteLift < 0.30f && pauseLift < 0.35f && stress < 0.45f -> "专注"
             stress >= 0.60f && deleteLift >= 0.48f -> "烦躁"
             stress >= 0.55f -> "紧张"
-            fatigue >= 0.56f && loneliness >= 0.48f -> "空落"
+            fatigue >= 0.56f && loneliness >= 0.48f && night > 0.5f -> "空落"
             fatigue >= 0.52f -> "疲惫"
             loneliness >= 0.58f -> "孤独"
             arousal >= 0.45f && stress < 0.36f -> "积极活跃"
@@ -124,8 +149,22 @@ object SignalPreprocessor {
             if (fatigue >= 0.42f) add("疲惫")
             if (loneliness >= 0.42f) add("空落")
             if (arousal >= 0.42f && stress < 0.45f) add("专注")
+            if (scene in listOf("video_app", "game_app") && arousal >= 0.38f) add("积极活跃")
+            if (scene == "chat_app" && deleteLift >= 0.42f) add("烦躁")
             if (primary in listOf("平静", "轻松")) add("专注")
         }.distinct().take(4)
+        val hypotheses = buildList {
+            when (scene) {
+                "chat_app" -> add("聊天场景下，删除率和停顿更可能反映犹豫、紧张或烦躁")
+                "video_app" -> add("视频场景下，心率波动可能来自内容刺激，需降低负向判断强度")
+                "game_app" -> add("游戏场景下，高唤醒不一定是负面情绪")
+                "browser_app" -> add("浏览场景下，应用切换和停顿需要结合时间段观察")
+                else -> add("当前场景信息有限，主要参考结构化指标偏离")
+            }
+            if (night > 0.5f) add("深夜场景提高疲惫、空落和恢复需求候选权重")
+            if (sustainedUse) add("连续使用偏长，提高疲惫候选权重")
+            if (appSwitchApprox >= 3) add("短时间多场景切换，提高压力或分心候选权重")
+        }.take(4)
         val confidence = when (qualityLevel) {
             "high" -> 0.78f
             "medium" -> 0.62f
@@ -143,7 +182,9 @@ object SignalPreprocessor {
             localConfidence = confidence,
             observedClues = observed.ifEmpty { listOf("当前结构化信号没有明显偏离") },
             counterEvidence = counter,
-            dataLimits = missing.map { "缺少$it" }.take(4)
+            dataLimits = missing.map { "缺少$it" }.take(4),
+            sceneTag = scene,
+            contextHypotheses = hypotheses
         )
     }
 
@@ -161,10 +202,22 @@ object SignalPreprocessor {
     private fun lowActivity(sample: HabitSampleEntity): Float =
         if (sample.motionLevel < 0.12f && sample.typingSpeed in 1f..60f) 0.75f else 0.10f
 
+    private fun sceneFromContext(contextTag: String): String = when {
+        contextTag.contains("chat_app", ignoreCase = true) -> "chat_app"
+        contextTag.contains("video_app", ignoreCase = true) -> "video_app"
+        contextTag.contains("game_app", ignoreCase = true) -> "game_app"
+        contextTag.contains("browser_app", ignoreCase = true) -> "browser_app"
+        contextTag.contains("social_app", ignoreCase = true) -> "social_app"
+        contextTag.contains("productivity_app", ignoreCase = true) -> "productivity_app"
+        else -> "unknown"
+    }
+
     private fun Float?.orZero(): Float = this ?: 0f
     private fun Float.positive(): Float = if (this > 0f) this else 0f
     private fun Float.motionAdjusted(motionLevel: Float): Float =
         if (motionLevel >= 0.45f) this * (1f - (motionLevel - 0.35f).coerceIn(0f, 0.45f)) else this
+
+    private const val FIFTEEN_MINUTES_MS = 15L * 60L * 1000L
 }
 
 private fun Map<String, Float>.toCompactString(): String =
