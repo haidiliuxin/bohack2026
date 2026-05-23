@@ -16,8 +16,13 @@ class RealGuardianAgentApi : GuardianAgentApi {
             do not predict extreme behavior, do not infer private text, and do not save or request raw text.
             Consider the user's evolving personality/care model and recent activity context,
             but treat them as weak signals. Prefer uncertainty over overclaiming.
+            Output only one compact JSON object. Do not output markdown, analysis text,
+            thinking text, code fences, or any text before/after JSON.
             The primaryEmotion MUST be exactly one of this closed Chinese label set:
             平静|专注|紧张|烦躁|焦虑|疲惫|低落|空落|积极活跃|运动干扰.
+            If localEmotionGuess contains a closed-set primary label and the structured
+            evidence does not strongly contradict it, keep that label and lower/raise
+            confidence using observed clues and counter evidence.
 
             Boundary rules:
             1. If motionLevel is high or cleanedSignalSummary says motion=high, prefer 运动干扰 unless interaction signals are extremely abnormal.
