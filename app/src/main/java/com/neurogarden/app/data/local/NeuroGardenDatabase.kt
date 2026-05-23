@@ -17,7 +17,7 @@ import androidx.room.RoomDatabase
         RiskEventEntity::class,
         AgentAuditLogEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class NeuroGardenDatabase : RoomDatabase() {

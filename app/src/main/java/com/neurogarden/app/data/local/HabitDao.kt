@@ -38,6 +38,9 @@ interface HabitDao {
     @Query("SELECT * FROM threshold_profiles ORDER BY updatedAt DESC LIMIT 1")
     fun observeLatestThresholdProfile(): Flow<ThresholdProfileEntity?>
 
+    @Query("SELECT * FROM threshold_profiles ORDER BY updatedAt DESC LIMIT :limit")
+    fun observeRecentThresholdProfiles(limit: Int = 12): Flow<List<ThresholdProfileEntity>>
+
     @Query("SELECT * FROM threshold_profiles ORDER BY updatedAt DESC LIMIT 1")
     suspend fun getLatestThresholdProfile(): ThresholdProfileEntity?
 

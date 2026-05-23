@@ -114,8 +114,7 @@ class PassiveGuardianService : Service() {
             samples = samples.take(20),
             lastEmotionLabel = null
         )
-        val agent = app.guardianAgentApi.analyzeSignals(
-            AgentSignalRequest(
+        val agentRequest = AgentSignalRequest(
                 userId = "local-demo-user",
                 recentSignals = samples.map { it.toDto() },
                 currentBaseline = baseline.toDto(),
@@ -128,7 +127,9 @@ class PassiveGuardianService : Service() {
                 personalityModel = personalityModel,
                 recentActivity = recentActivity
             )
-        )
+        val agentStartedAt = System.currentTimeMillis()
+        val agent = app.guardianAgentApi.analyzeSignals(agentRequest)
+        val agentLatencyMs = System.currentTimeMillis() - agentStartedAt
         val fallbackUsed = agent.isMockFallback()
         app.agentAuditLogRepository.record(
             triggerReason = if (combinedRisk >= 0.35f) "passive_abnormal" else "passive_scheduled",
@@ -136,6 +137,8 @@ class PassiveGuardianService : Service() {
             httpSuccess = !fallbackUsed,
             fallbackUsed = fallbackUsed,
             fallbackReason = agent.reason.takeIf { fallbackUsed },
+            requestSummary = "signals=${agentRequest.recentSignals.size};risk=${"%.2f".format(agentRequest.latestRiskScore)};level=${agentRequest.latestRiskLevel};weather=${agentRequest.weather ?: "none"};segment=${agentRequest.timeSegment ?: "none"}",
+            latencyMs = agentLatencyMs,
             requestTime = now
         )
         val risk = PersonalizedRiskCalculator.calculate(sample, baseline, thresholds, agent, samples)

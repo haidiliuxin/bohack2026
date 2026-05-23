@@ -14,6 +14,8 @@ class AgentAuditLogRepository(private val dao: AgentAuditLogDao) {
         fallbackUsed: Boolean,
         fallbackReason: String?,
         cacheUsed: Boolean = false,
+        requestSummary: String = "",
+        latencyMs: Long = 0L,
         requestTime: Long = System.currentTimeMillis()
     ) {
         dao.insert(
@@ -26,6 +28,8 @@ class AgentAuditLogRepository(private val dao: AgentAuditLogDao) {
                 riskLevel = response?.riskLevel ?: "unknown",
                 confidence = response?.confidence ?: 0f,
                 mainReasons = response?.mainReasons.orEmpty().take(3).joinToString("|"),
+                requestSummary = requestSummary,
+                latencyMs = latencyMs,
                 fallbackUsed = fallbackUsed,
                 fallbackReason = fallbackReason,
                 cacheUsed = cacheUsed,

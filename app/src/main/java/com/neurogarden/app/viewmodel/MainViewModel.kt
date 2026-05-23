@@ -134,6 +134,8 @@ class MainViewModel(
     val todayRiskEvents = riskEventRepository.observeTodayEvents()
     val recentRiskEvents = riskEventRepository.observeRecent7DayEvents()
     val agentAuditLogs = agentAuditLogRepository.recentLogs
+    val feedbackRecords = habitRepository.feedbackRecords
+    val thresholdProfiles = habitRepository.recentThresholdProfiles
     val careMode: StateFlow<CareMode> = careModeStore.currentMode.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -335,13 +337,17 @@ class MainViewModel(
                 personalityModel = personalityModel,
                 recentActivity = recentActivity
             )
+            val agentStartedAt = System.currentTimeMillis()
             val agentResponse = guardianAgentApi.analyzeSignals(agentRequest)
+            val agentLatencyMs = System.currentTimeMillis() - agentStartedAt
             agentAuditLogRepository.record(
                 triggerReason = if (result.stressScore >= 0.35f) "abnormal" else "scheduled",
                 response = agentResponse,
                 httpSuccess = !agentResponse.isMockFallback(),
                 fallbackUsed = agentResponse.isMockFallback(),
-                fallbackReason = agentResponse.reason.takeIf { agentResponse.isMockFallback() }
+                fallbackReason = agentResponse.reason.takeIf { agentResponse.isMockFallback() },
+                requestSummary = "signals=${agentRequest.recentSignals.size};risk=${"%.2f".format(agentRequest.latestRiskScore)};level=${agentRequest.latestRiskLevel};weather=${agentRequest.weather ?: "none"};segment=${agentRequest.timeSegment ?: "none"}",
+                latencyMs = agentLatencyMs
             )
             val latestQuality = DataQualityEvaluator.evaluate(
                 habitSamples = samples.filter { it.timestamp >= now.startOfDay() },
@@ -870,6 +876,7 @@ class MainViewModel(
             weather = weatherRepository.current().eventLabel(),
             timeSegment = demoNow.timeSegment()
         )
+        val agentStartedAt = System.currentTimeMillis()
         val response = runCatching { guardianAgentApi.analyzeSignals(request) }
             .getOrElse {
                 AgentSignalResponse(
@@ -886,6 +893,7 @@ class MainViewModel(
                     metricDeviationPercent = emptyMap()
                 )
             }
+        val agentLatencyMs = System.currentTimeMillis() - agentStartedAt
         val fallbackUsed = response.isMockFallback() || response.reason.contains("fallback", ignoreCase = true)
         agentAuditLogRepository.record(
             triggerReason = "demo",
@@ -893,6 +901,8 @@ class MainViewModel(
             httpSuccess = !fallbackUsed,
             fallbackUsed = fallbackUsed,
             fallbackReason = response.reason.takeIf { fallbackUsed },
+            requestSummary = "signals=${request.recentSignals.size};risk=${"%.2f".format(request.latestRiskScore)};level=${request.latestRiskLevel};weather=${request.weather ?: "none"};segment=${request.timeSegment ?: "none"}",
+            latencyMs = agentLatencyMs,
             requestTime = demoNow
         )
         val event = RiskEventEntity(

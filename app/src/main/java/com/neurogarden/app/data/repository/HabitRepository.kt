@@ -11,6 +11,7 @@ class HabitRepository(private val dao: HabitDao) {
     val samples = dao.observeSamples()
     val latestBaseline = dao.observeLatestBaseline()
     val latestThresholdProfile = dao.observeLatestThresholdProfile()
+    val recentThresholdProfiles = dao.observeRecentThresholdProfiles()
     val feedbackRecords = dao.observeFeedbackRecords()
 
     suspend fun saveSample(sample: HabitSampleEntity): Long = dao.insertSample(sample)

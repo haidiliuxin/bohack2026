@@ -44,7 +44,9 @@ import com.neurogarden.app.algorithm.CareMode
 import com.neurogarden.app.algorithm.CareModePolicy
 import com.neurogarden.app.algorithm.DailyMonitoringSummary
 import com.neurogarden.app.algorithm.DiscomfortBoundaryCalculator
+import com.neurogarden.app.data.local.FeedbackRecordEntity
 import com.neurogarden.app.data.local.RiskEventEntity
+import com.neurogarden.app.data.local.ThresholdProfileEntity
 import com.neurogarden.app.data.local.TherapySessionEntity
 import com.neurogarden.app.passive.AccessibilitySignalStore
 import com.neurogarden.app.passive.NotificationPolicyStore
@@ -76,6 +78,9 @@ fun MainDashboardScreen(
     sevenDaySummaries: List<DailyMonitoringSummary>,
     careMode: CareMode,
     careModePolicy: CareModePolicy,
+    wearConnectionStatus: String,
+    feedbackRecords: List<FeedbackRecordEntity>,
+    thresholdProfiles: List<ThresholdProfileEntity>,
     guardianSettings: GuardianSettings,
     onGuardianSettingsChange: (GuardianSettings) -> Unit,
     onStartPassiveGuardian: () -> Unit,
@@ -193,6 +198,9 @@ fun MainDashboardScreen(
                         settings = guardianSettings,
                         careMode = careMode,
                         careModePolicy = careModePolicy,
+                        wearConnectionStatus = wearConnectionStatus,
+                        feedbackRecords = feedbackRecords,
+                        thresholdProfiles = thresholdProfiles,
                         onCareModeChange = onCareModeChange,
                         onSettingsChange = onGuardianSettingsChange,
                         onOpenAccessibilitySettings = onOpenAccessibilitySettings,
@@ -794,6 +802,9 @@ private fun SettingsDashboardScreen(
     settings: GuardianSettings,
     careMode: CareMode,
     careModePolicy: CareModePolicy,
+    wearConnectionStatus: String,
+    feedbackRecords: List<FeedbackRecordEntity>,
+    thresholdProfiles: List<ThresholdProfileEntity>,
     onCareModeChange: (CareMode) -> Unit,
     onSettingsChange: (GuardianSettings) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
@@ -818,6 +829,9 @@ private fun SettingsDashboardScreen(
         Text("设置", style = MaterialTheme.typography.headlineMedium)
         CareModeSelector(careMode, careModePolicy, onCareModeChange)
         AgentConfigCard(realtime)
+        DataSourceStatusCard(realtime, settings, wearConnectionStatus)
+        EmotionAcceptanceCard(feedbackRecords, realtime)
+        ThresholdHistoryCard(thresholdProfiles)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("隐私与权限", style = MaterialTheme.typography.titleMedium)
@@ -849,6 +863,7 @@ private fun SettingsDashboardScreen(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("设备连接", style = MaterialTheme.typography.titleMedium)
+                Text("连接状态：$wearConnectionStatus")
                 Button(onClick = onConnectWear, modifier = Modifier.fillMaxWidth()) { Text("连接 Wear OS 手表") }
                 OutlinedButton(onClick = onOpenBluetoothSettings, modifier = Modifier.fillMaxWidth()) { Text("打开蓝牙设置") }
             }
@@ -906,6 +921,67 @@ private fun AgentConfigCard(realtime: RealtimeUiState) {
             Text("最近一次请求：${realtime.guardianRuntimeStatus.lastAgentStatus}")
             Text("最近一次说明：${realtime.guardianRuntimeStatus.lastAgentReason}")
             Text("不会显示 API Key，也不会把被动采集的输入原文发给 Agent。")
+        }
+    }
+}
+
+@Composable
+private fun DataSourceStatusCard(
+    realtime: RealtimeUiState,
+    settings: GuardianSettings,
+    wearConnectionStatus: String
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("数据源状态", style = MaterialTheme.typography.titleMedium)
+            Text("心率来源：${heartRateSource(realtime)} / 当前 ${realtime.packet.heartRate} BPM")
+            Text("呼吸来源：${heartRateSource(realtime)} / 当前 ${realtime.packet.breathRate} 次/分钟")
+            Text("Wear 连接：$wearConnectionStatus")
+            Text("模拟手表：${if (settings.watchSimulationEnabled) "已开启" else "未开启"}，心率 ${settings.simulatedHeartRate}，呼吸 ${settings.simulatedBreathRate}，运动 ${"%.2f".format(settings.simulatedMotionLevel)}")
+            Text("后台守护：${if (settings.passiveGuardianRunning) "运行中" else "未启动"}")
+            Text("建议演示：无真实手表时开启模拟手表，并把运动干扰保持在 0.10 左右。")
+        }
+    }
+}
+
+@Composable
+private fun EmotionAcceptanceCard(
+    feedbackRecords: List<FeedbackRecordEntity>,
+    realtime: RealtimeUiState
+) {
+    val recent = feedbackRecords.take(20)
+    val labeled = recent.filter { it.source == "emotion_label" || it.userLabel.isNotBlank() }
+    val exact = labeled.count { it.userLabel == it.predictedState || it.predictedState.contains(it.userLabel) || it.userLabel.contains(it.predictedState) }
+    val helpful = recent.count { it.helpful }
+    val falseAlarms = recent.count { it.userLabel.contains("误报") || !it.helpful }
+    val hitRate = if (labeled.isEmpty()) 0f else exact.toFloat() / labeled.size.toFloat()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("情绪识别验收", style = MaterialTheme.typography.titleMedium)
+            Text("当前识别：${realtime.emotionalState.primaryState} / 置信度 ${"%.0f".format(realtime.emotionalState.confidence * 100)}%")
+            Text("近 20 条反馈：${recent.size} 条，有帮助 $helpful 条，误报/无帮助 $falseAlarms 条")
+            Text("粗略标签命中：${"%.0f".format(hitRate * 100)}%（基于用户自评标签和系统预测文本匹配）")
+            Text("常见用户标注：${labeled.groupingBy { it.userLabel }.eachCount().entries.sortedByDescending { it.value }.take(4).joinToString("、") { "${it.key}(${it.value})" }.ifBlank { "暂无" }}")
+            Text("这个卡片用于验收趋势，不代表医学准确率。")
+        }
+    }
+}
+
+@Composable
+private fun ThresholdHistoryCard(thresholdProfiles: List<ThresholdProfileEntity>) {
+    val latest = thresholdProfiles.firstOrNull()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("反馈调参记录", style = MaterialTheme.typography.titleMedium)
+            if (latest == null) {
+                Text("暂无阈值记录。")
+            } else {
+                Text("当前来源：${latest.updatedBy} / ${latest.updatedReason}")
+                Text("当前阈值：心率 +${"%.1f".format(latest.heartRateDeltaWarning)}，呼吸 ${"%.1f".format(latest.breathRateWarning)}，输入偏离 ${latest.typingSpeedDeltaWarning.toPercentText()}，删除 ${latest.deleteRateWarning.toPercentText()}，停顿 ${"%.1f".format(latest.pauseDurationWarning)} 秒")
+                thresholdProfiles.take(5).forEach { profile ->
+                    Text("${profile.updatedAt.toReadableTime()} · ${profile.updatedBy} · ${profile.updatedReason}")
+                }
+            }
         }
     }
 }

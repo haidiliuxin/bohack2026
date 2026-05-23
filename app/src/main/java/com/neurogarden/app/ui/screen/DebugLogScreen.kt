@@ -109,6 +109,7 @@ fun DebugLogScreen(
                         Text("时间：${timeText(log.requestTime)} / 触发：${log.triggerReason}")
                         Text("HTTP：${if (log.httpSuccess) "成功" else "失败或兜底"} / 状态：${log.responseEmotion}")
                         Text("评分：${"%.2f".format(log.riskScore)} / 等级：${log.riskLevel} / 置信度：${"%.2f".format(log.confidence)}")
+                        Text("耗时：${log.latencyMs} ms / 请求摘要：${log.requestSummary.ifBlank { "未记录" }}")
                         Text("原因：${log.mainReasons.ifBlank { "无" }}")
                         Text("fallback：${if (log.fallbackUsed) log.fallbackReason ?: "已使用" else "否"} / cache：${if (log.cacheUsed) "是" else "否"}")
                     }

@@ -118,6 +118,8 @@ private fun NeuroGardenRoot(
     val careMode by mainViewModel.careMode.collectAsState()
     val careModePolicy by mainViewModel.careModePolicy.collectAsState()
     val agentAuditLogs by mainViewModel.agentAuditLogs.collectAsState(initial = emptyList())
+    val feedbackRecords by mainViewModel.feedbackRecords.collectAsState(initial = emptyList())
+    val thresholdProfiles by mainViewModel.thresholdProfiles.collectAsState(initial = emptyList())
     val sessions by therapyViewModel.sessions.collectAsState(initial = emptyList())
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -167,6 +169,9 @@ private fun NeuroGardenRoot(
                 sevenDaySummaries = sevenDaySummaries,
                 careMode = careMode,
                 careModePolicy = careModePolicy,
+                wearConnectionStatus = wearConnectionStatus,
+                feedbackRecords = feedbackRecords,
+                thresholdProfiles = thresholdProfiles,
                 guardianSettings = guardianSettings,
                 onGuardianSettingsChange = { guardianSettings = it },
                 onStartPassiveGuardian = {
