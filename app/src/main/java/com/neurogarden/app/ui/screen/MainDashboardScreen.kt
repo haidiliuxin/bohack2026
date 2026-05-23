@@ -648,6 +648,39 @@ private fun GuardianDashboardScreen(
                 }
             }
         }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("手表/模拟手表数据", style = MaterialTheme.typography.titleMedium)
+                Text("没有真实手表时，开启这里可以用模拟心率、呼吸和运动干扰参与后台判断。")
+                FilterChip(
+                    selected = settings.watchSimulationEnabled,
+                    onClick = { onSettingsChange(settings.copy(watchSimulationEnabled = !settings.watchSimulationEnabled)) },
+                    label = { Text(if (settings.watchSimulationEnabled) "模拟手表：已开启" else "模拟手表：未开启") }
+                )
+                Text("模拟心率：${settings.simulatedHeartRate} BPM")
+                Slider(
+                    value = settings.simulatedHeartRate.toFloat(),
+                    onValueChange = { onSettingsChange(settings.copy(simulatedHeartRate = it.toInt())) },
+                    valueRange = 60f..130f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("模拟呼吸：${settings.simulatedBreathRate} 次/分钟")
+                Slider(
+                    value = settings.simulatedBreathRate.toFloat(),
+                    onValueChange = { onSettingsChange(settings.copy(simulatedBreathRate = it.toInt())) },
+                    valueRange = 8f..32f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("模拟运动干扰：${"%.2f".format(settings.simulatedMotionLevel)}")
+                Slider(
+                    value = settings.simulatedMotionLevel,
+                    onValueChange = { onSettingsChange(settings.copy(simulatedMotionLevel = it)) },
+                    valueRange = 0f..1f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("测试建议：心率 110，呼吸 25，运动干扰 0.10。然后启动守护，到其他 App 快速打字和删除。")
+            }
+        }
         if (careMode == CareMode.SELF_MONITORING) {
             Card(Modifier.fillMaxWidth()) {
                 Text("自我监测模式默认隐藏监护人提醒，只展示个人趋势和温和提醒。", modifier = Modifier.padding(14.dp))

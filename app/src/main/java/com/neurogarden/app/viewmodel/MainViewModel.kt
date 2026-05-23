@@ -128,6 +128,7 @@ class MainViewModel(
     private val guardianAgentApi: GuardianAgentApi
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(RealtimeUiState())
+    private var integrationDemoTick = 0
     val uiState: StateFlow<RealtimeUiState> = _uiState.asStateFlow()
     val todayRiskEvents = riskEventRepository.observeTodayEvents()
     val recentRiskEvents = riskEventRepository.observeRecent7DayEvents()
@@ -769,51 +770,54 @@ class MainViewModel(
     }
 
     private suspend fun runIntegrationDemo(now: Long) {
+        integrationDemoTick += 1
+        val demoNow = now + integrationDemoTick * 60_000L
+        val demoRiskScore = listOf(0.72f, 0.84f, 0.66f, 0.91f, 0.78f)[integrationDemoTick % 5]
         val sample = HabitSampleEntity(
-            timestamp = now,
-            heartRate = 110,
-            breathRate = 25,
+            timestamp = demoNow,
+            heartRate = 104 + (integrationDemoTick % 4) * 4,
+            breathRate = 21 + (integrationDemoTick % 5),
             motionLevel = 0.08f,
-            typingSpeed = 52f,
-            deleteRate = 0.28f,
-            pauseDuration = 6.5f,
+            typingSpeed = 52f + (integrationDemoTick % 3) * 12f,
+            deleteRate = 0.22f + (integrationDemoTick % 4) * 0.03f,
+            pauseDuration = 5.5f + (integrationDemoTick % 5) * 1.4f,
             userFeedback = null,
             contextTag = "integration_demo",
             riskLevel = "observe",
-            createdAt = now
+            createdAt = demoNow
         )
         habitRepository.saveSample(sample)
         therapyRepository.saveSensorRecord(
             SensorRecordEntity(
-                timestamp = now,
+                timestamp = demoNow,
                 heartRate = sample.heartRate,
                 breathRate = sample.breathRate,
                 motionLevel = sample.motionLevel,
-                stressScore = 0.82f,
+                stressScore = demoRiskScore,
                 confidence = 0.84f,
                 state = "needs_confirmation"
             )
         )
-        val samples = habitRepository.getSamplesSince(HabitLearningEngine.windowStart(now, HabitLearningWindow.THIRTY_DAYS))
-        val baseline = HabitLearningEngine.buildBaseline(samples, now)
-        val thresholds = (habitRepository.getLatestThresholdProfile() ?: HabitLearningEngine.defaultThresholdProfile(now))
-            .applyCareModePolicy(careModePolicy.value, now)
+        val samples = habitRepository.getSamplesSince(HabitLearningEngine.windowStart(demoNow, HabitLearningWindow.THIRTY_DAYS))
+        val baseline = HabitLearningEngine.buildBaseline(samples, demoNow)
+        val thresholds = (habitRepository.getLatestThresholdProfile() ?: HabitLearningEngine.defaultThresholdProfile(demoNow))
+            .applyCareModePolicy(careModePolicy.value, demoNow)
         habitRepository.saveBaseline(baseline)
         val request = AgentSignalRequest(
             userId = "local-demo-user",
             recentSignals = samples.take(12).map { it.toDto() },
             currentBaseline = baseline.toDto(),
             currentThresholds = thresholds.toDto(),
-            latestRiskScore = 0.82f,
+            latestRiskScore = demoRiskScore,
             latestRiskLevel = "guardian_check",
             userFeedback = null,
             weather = weatherRepository.current().eventLabel(),
-            timeSegment = now.timeSegment()
+            timeSegment = demoNow.timeSegment()
         )
         val response = runCatching { guardianAgentApi.analyzeSignals(request) }
             .getOrElse {
                 AgentSignalResponse(
-                    riskScore = 0.82f,
+                    riskScore = demoRiskScore,
                     riskLevel = "guardian_check",
                     emotionalState = "needs_confirmation",
                     suggestedAction = "建议确认当前状态并查看异常详情。",
@@ -833,12 +837,12 @@ class MainViewModel(
             httpSuccess = !fallbackUsed,
             fallbackUsed = fallbackUsed,
             fallbackReason = response.reason.takeIf { fallbackUsed },
-            requestTime = now
+            requestTime = demoNow
         )
         val event = RiskEventEntity(
-            startTime = now,
-            endTime = now + 5L * 60L * 1000L,
-            riskScore = response.riskScore ?: 0.82f,
+            startTime = demoNow,
+            endTime = demoNow + 5L * 60L * 1000L,
+            riskScore = response.riskScore ?: demoRiskScore,
             riskLevel = response.riskLevel,
             confidence = response.confidence,
             mainReasons = response.mainReasons.take(3).ifEmpty {
@@ -858,7 +862,7 @@ class MainViewModel(
             guardianNotified = response.shouldNotifyGuardian,
             guardianFeedback = null,
             isFalseAlarm = false,
-            createdAt = System.currentTimeMillis()
+            createdAt = demoNow
         )
         riskEventRepository.insertEvent(event)
         _uiState.value = _uiState.value.copy(

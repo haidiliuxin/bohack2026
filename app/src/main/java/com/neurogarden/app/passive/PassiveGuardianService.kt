@@ -149,6 +149,7 @@ class PassiveGuardianService : Service() {
                 message = notificationPlan.message,
                 now = now
             )
+            PassiveOverlayAlert.show(this, notificationPlan.title, notificationPlan.message)
         }
 
         combinedAlertTicks = if (combinedAlert != null) combinedAlertTicks + 1 else 0
