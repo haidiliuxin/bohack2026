@@ -34,7 +34,7 @@ class MockHeartRateClient : HeartRateClient {
     private val scope = CoroutineScope(Dispatchers.Default)
     private val _heartRateFlow = MutableStateFlow(86)
     override val heartRateFlow: Flow<Int> = _heartRateFlow.asStateFlow()
-    private val _statusFlow = MutableStateFlow("Mock 心率")
+    private val _statusFlow = MutableStateFlow("模拟心率")
     override val statusFlow: Flow<String> = _statusFlow.asStateFlow()
     private var job: Job? = null
 
@@ -72,7 +72,7 @@ class RealHeartRateClient(context: Context) : HeartRateClient {
     private val callback = object : MeasureCallback {
         override fun onRegistered() {
             registered = true
-            _statusFlow.value = "Health Services 心率监听已启动"
+            _statusFlow.value = "真实心率监听已启动"
         }
 
         override fun onRegistrationFailed(throwable: Throwable) {

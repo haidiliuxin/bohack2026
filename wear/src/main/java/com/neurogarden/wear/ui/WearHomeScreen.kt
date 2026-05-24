@@ -58,6 +58,7 @@ fun WearHomeScreen(
             item { WatchHeader(state) }
             item { VitalCircle(state) }
             item { MetricStrip(state) }
+            item { SourceStrip(state) }
             item { StatusSnapshot(state) }
             item { EvidenceCard(state) }
             item {
@@ -147,13 +148,13 @@ private fun VitalCircle(state: WatchVitalUiState) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     text = state.heartRate.toString(),
-                    fontSize = 38.sp,
+                    fontSize = 40.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
                 Text(
                     text = " bpm",
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     color = Color(0xFFB8C9C6),
                     modifier = Modifier.padding(bottom = 7.dp)
                 )
@@ -166,6 +167,48 @@ private fun VitalCircle(state: WatchVitalUiState) {
                 fontWeight = FontWeight.SemiBold
             )
         }
+    }
+}
+
+@Composable
+private fun MetricStrip(state: WatchVitalUiState) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth(0.82f)
+            .widthIn(max = 270.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xFF102025))
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        SmallMetric("呼吸", "${state.breathRate}/min")
+        SmallMetric("运动", state.motionLabel)
+        SmallMetric("状态", state.statusLabel)
+    }
+}
+
+@Composable
+private fun SourceStrip(state: WatchVitalUiState) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth(0.82f)
+            .widthIn(max = 270.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0xFF0C171B))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        SmallMetric("心率", state.heartRateSource.label)
+        SmallMetric("呼吸", state.breathRateSource.label)
+        SmallMetric("运动", state.motionSource.label)
+    }
+}
+
+@Composable
+private fun SmallMetric(title: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(title, fontSize = 10.sp, color = Color(0xFF7F9691), maxLines = 1)
+        Text(value, fontSize = 12.sp, color = Color.White, maxLines = 1)
     }
 }
 
@@ -194,7 +237,7 @@ private fun StatusSnapshot(state: WatchVitalUiState) {
             maxLines = 1
         )
         Text(
-            text = "同步 ${state.lastSyncText()} · 来源 ${state.dataSource.label}",
+            text = "同步 ${state.lastSyncText()} · 心率 ${state.heartRateSource.label}",
             fontSize = 11.sp,
             color = Color(0xFF93AAA5),
             maxLines = 1
@@ -206,31 +249,6 @@ private fun StatusSnapshot(state: WatchVitalUiState) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-    }
-}
-
-@Composable
-private fun MetricStrip(state: WatchVitalUiState) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth(0.82f)
-            .widthIn(max = 270.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color(0xFF102025))
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        SmallMetric("呼吸", "${state.breathRate}/min")
-        SmallMetric("运动", state.motionLabel())
-        SmallMetric("状态", state.riskState.label)
-    }
-}
-
-@Composable
-private fun SmallMetric(title: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, fontSize = 10.sp, color = Color(0xFF7F9691), maxLines = 1)
-        Text(value, fontSize = 12.sp, color = Color.White, maxLines = 1)
     }
 }
 
@@ -249,7 +267,7 @@ private fun EvidenceCard(state: WatchVitalUiState) {
         state.observedClues.take(2).ifEmpty { listOf("体征节律平稳") }.forEach {
             WatchLine("证据", it)
         }
-        state.counterEvidence.take(1).forEach {
+        state.counterEvidence.take(2).forEach {
             WatchLine("限制", it)
         }
         WatchLine("说明", state.uncertainty)
@@ -265,12 +283,6 @@ private fun WatchLine(prefix: String, text: String) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
     )
-}
-
-private fun WatchVitalUiState.motionLabel(): String = when {
-    motionLevel < 0.25f -> "低"
-    motionLevel < 0.60f -> "中"
-    else -> "高"
 }
 
 private fun WatchVitalUiState.lastSyncText(): String =

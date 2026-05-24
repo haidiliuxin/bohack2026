@@ -25,9 +25,12 @@ import com.neurogarden.wear.data.PhoneDataSender
 import com.neurogarden.wear.haptic.BreathHapticController
 import com.neurogarden.wear.health.HeartRateClient
 import com.neurogarden.wear.health.MockHeartRateClient
+import com.neurogarden.wear.health.MotionSource
+import com.neurogarden.wear.health.MotionState
+import com.neurogarden.wear.health.MotionStateDetector
 import com.neurogarden.wear.health.RealHeartRateClient
+import com.neurogarden.wear.ui.MeasurementSource
 import com.neurogarden.wear.ui.WatchDataQuality
-import com.neurogarden.wear.ui.WatchDataSource
 import com.neurogarden.wear.ui.WatchRiskState
 import com.neurogarden.wear.ui.WatchVitalUiState
 import com.neurogarden.wear.ui.WearBreathingScreen
@@ -38,6 +41,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
     private lateinit var heartRateClient: HeartRateClient
     private val mockHeartRateClient = MockHeartRateClient()
+    private lateinit var motionStateDetector: MotionStateDetector
     private lateinit var phoneDataSender: PhoneDataSender
     private lateinit var hapticController: BreathHapticController
     private val commandEvents = MutableSharedFlow<WearCommand>(extraBufferCapacity = 8)
@@ -46,6 +50,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         super.onCreate(savedInstanceState)
         phoneDataSender = PhoneDataSender(this)
         hapticController = BreathHapticController(this)
+        motionStateDetector = MotionStateDetector(this)
         heartRateClient = createHeartRateClient()
 
         setContent {
@@ -56,18 +61,23 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
             var exhaleSeconds by remember { mutableIntStateOf(6) }
             var vitalState by remember { mutableStateOf(WatchVitalUiState()) }
             val heartRate by activeHeartRateClient.heartRateFlow.collectAsState(initial = 86)
-            val status by activeHeartRateClient.statusFlow.collectAsState(initial = "Mock 心率")
+            val heartStatus by activeHeartRateClient.statusFlow.collectAsState(initial = "模拟心率")
+            val motionState by motionStateDetector.stateFlow.collectAsState()
 
+            LaunchedEffect(Unit) {
+                motionStateDetector.start()
+            }
             LaunchedEffect(activeHeartRateClient) {
                 activeHeartRateClient.start()
             }
-            LaunchedEffect(heartRate, manualRefreshTick, status, activeHeartRateClient) {
+            LaunchedEffect(heartRate, manualRefreshTick, heartStatus, activeHeartRateClient, motionState) {
                 vitalState = buildVitalState(
                     heartRate = heartRate,
                     tick = manualRefreshTick,
                     last = vitalState,
-                    realSource = activeHeartRateClient !is MockHeartRateClient,
-                    status = status
+                    realHeartClient = activeHeartRateClient !is MockHeartRateClient,
+                    heartStatus = heartStatus,
+                    motionState = motionState
                 )
             }
             LaunchedEffect(Unit) {
@@ -112,8 +122,10 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
                                 activeHeartRateClient.stop()
                                 activeHeartRateClient = RealHeartRateClient(this@MainActivity)
                                 heartRateClient = activeHeartRateClient
+                                vitalState = vitalState.copy(lastCommandText = "已切换真实心率监听")
                             } else {
                                 manualRefreshTick += 1
+                                vitalState = vitalState.copy(lastCommandText = "已刷新体征数据")
                             }
                         }
                     },
@@ -150,6 +162,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
     override fun onDestroy() {
         super.onDestroy()
+        motionStateDetector.stop()
         lifecycleScope.launch { heartRateClient.stop() }
         hapticController.stop()
     }
@@ -185,30 +198,46 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         heartRate: Int,
         tick: Int,
         last: WatchVitalUiState,
-        realSource: Boolean,
-        status: String
+        realHeartClient: Boolean,
+        heartStatus: String,
+        motionState: MotionState
     ): WatchVitalUiState {
+        val hasRealHeartSample = realHeartClient && heartRate > 0
         val safeHeartRate = if (heartRate > 0) heartRate else 86
         val breathRate = estimatedBreathRate(safeHeartRate)
-        val motionLevel = listOf(0.08f, 0.16f, 0.32f, 0.52f)[tick % 4]
+        val motionLevel = motionState.motionLevel
         val riskState = when {
             motionLevel >= 0.60f -> WatchRiskState.STABLE
             safeHeartRate >= 104 || breathRate >= 21 -> WatchRiskState.ALERT
             safeHeartRate >= 92 || breathRate >= 18 -> WatchRiskState.OBSERVE
             else -> WatchRiskState.STABLE
         }
+        val heartSource = when {
+            hasRealHeartSample -> MeasurementSource.REAL
+            realHeartClient -> MeasurementSource.UNAVAILABLE
+            else -> MeasurementSource.MOCK
+        }
+        val motionSource = when (motionState.source) {
+            MotionSource.REAL -> MeasurementSource.REAL
+            MotionSource.MOCK -> MeasurementSource.MOCK
+            MotionSource.UNAVAILABLE -> MeasurementSource.UNAVAILABLE
+        }
+
         return last.copy(
             heartRate = safeHeartRate,
             breathRate = breathRate,
             motionLevel = motionLevel,
+            motionLabel = motionState.label,
             riskState = riskState,
             statusLabel = statusLabelFor(riskState, safeHeartRate, breathRate, motionLevel, tick),
-            confidence = confidenceFor(riskState, motionLevel, realSource),
-            dataQuality = dataQualityFor(tick, last.phoneConnected, realSource),
-            dataSource = if (realSource) WatchDataSource.REAL else WatchDataSource.MOCK,
+            confidence = confidenceFor(riskState, motionLevel, heartSource, motionSource),
+            dataQuality = dataQualityFor(tick, last.phoneConnected, heartSource, motionSource),
+            heartRateSource = heartSource,
+            breathRateSource = MeasurementSource.ESTIMATED,
+            motionSource = motionSource,
             observedClues = reasonsFor(riskState, safeHeartRate, breathRate, motionLevel),
-            counterEvidence = counterEvidenceFor(motionLevel, tick, status),
-            uncertainty = uncertaintyFor(riskState, realSource)
+            counterEvidence = counterEvidenceFor(motionLevel, tick, heartStatus, heartSource, motionState),
+            uncertainty = uncertaintyFor(riskState, heartSource, motionSource)
         )
     }
 
@@ -227,7 +256,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
             }
             WatchRiskState.ALERT -> buildList {
                 if (heartRate >= 104) add("心率偏高")
-                if (breathRate >= 21) add("呼吸较快")
+                if (breathRate >= 21) add("估算呼吸较快")
                 add("建议同步手机")
             }
         }.take(3)
@@ -243,42 +272,73 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         tick: Int
     ): String =
         when (state) {
-            WatchRiskState.STABLE -> if (motionLevel < 0.18f) "稳定" else "专注"
-            WatchRiskState.OBSERVE -> if (tick % 2 == 0) "轻度波动" else "疲惫"
-            WatchRiskState.ALERT -> if (heartRate >= 108 || breathRate >= 22) "节律偏高" else "紧张"
+            WatchRiskState.STABLE -> if (motionLevel < 0.18f) "稳定" else "活动中"
+            WatchRiskState.OBSERVE -> if (tick % 2 == 0) "轻度波动" else "需要观察"
+            WatchRiskState.ALERT -> if (heartRate >= 108 || breathRate >= 22) "节律偏高" else "守护提醒"
         }
 
-    private fun confidenceFor(state: WatchRiskState, motionLevel: Float, realSource: Boolean): Float {
-        val sourceBonus = if (realSource) 0.08f else 0f
+    private fun confidenceFor(
+        state: WatchRiskState,
+        motionLevel: Float,
+        heartSource: MeasurementSource,
+        motionSource: MeasurementSource
+    ): Float {
+        val sourceBonus =
+            (if (heartSource == MeasurementSource.REAL) 0.08f else 0f) +
+                (if (motionSource == MeasurementSource.REAL) 0.08f else 0f)
+        val sourcePenalty =
+            (if (heartSource == MeasurementSource.UNAVAILABLE) 0.14f else 0f) +
+                (if (motionSource == MeasurementSource.UNAVAILABLE) 0.10f else 0f)
         val base = when (state) {
             WatchRiskState.STABLE -> 0.68f
             WatchRiskState.OBSERVE -> 0.64f
             WatchRiskState.ALERT -> 0.70f
         }
         val motionPenalty = if (motionLevel > 0.45f) 0.16f else 0f
-        return (base + sourceBonus - motionPenalty).coerceIn(0f, 1f)
+        return (base + sourceBonus - sourcePenalty - motionPenalty).coerceIn(0f, 1f)
     }
 
-    private fun dataQualityFor(tick: Int, phoneConnected: Boolean, realSource: Boolean): WatchDataQuality =
+    private fun dataQualityFor(
+        tick: Int,
+        phoneConnected: Boolean,
+        heartSource: MeasurementSource,
+        motionSource: MeasurementSource
+    ): WatchDataQuality =
         when {
-            realSource || phoneConnected -> WatchDataQuality.HIGH
+            heartSource == MeasurementSource.REAL && motionSource == MeasurementSource.REAL -> WatchDataQuality.HIGH
+            phoneConnected -> WatchDataQuality.HIGH
+            heartSource == MeasurementSource.UNAVAILABLE || motionSource == MeasurementSource.UNAVAILABLE -> WatchDataQuality.LOW
             tick % 5 == 0 -> WatchDataQuality.LOW
             else -> WatchDataQuality.MEDIUM
         }
 
-    private fun counterEvidenceFor(motionLevel: Float, tick: Int, status: String): List<String> = buildList {
+    private fun counterEvidenceFor(
+        motionLevel: Float,
+        tick: Int,
+        heartStatus: String,
+        heartSource: MeasurementSource,
+        motionState: MotionState
+    ): List<String> = buildList {
         if (motionLevel >= 0.30f) add("可能受活动影响")
         if (tick % 5 == 0) add("缺少连续样本")
-        if (status.contains("Mock", ignoreCase = true)) add("当前为模拟心率")
-        add("未含 HRV/睡眠")
-    }.take(2)
+        if (heartSource != MeasurementSource.REAL) add("当前非真实心率")
+        if (motionState.source == MotionSource.UNAVAILABLE) add("运动传感器不可用")
+        if (heartStatus.contains("Mock", ignoreCase = true) || heartStatus.contains("模拟")) add("当前为模拟心率")
+        add("呼吸为手表端估算")
+    }.take(3)
 
-    private fun uncertaintyFor(state: WatchRiskState, realSource: Boolean): String =
+    private fun uncertaintyFor(
+        state: WatchRiskState,
+        heartSource: MeasurementSource,
+        motionSource: MeasurementSource
+    ): String =
         when {
-            !realSource -> "模拟数据仅供演示"
+            heartSource == MeasurementSource.MOCK -> "模拟数据仅供演示"
+            heartSource == MeasurementSource.UNAVAILABLE -> "等待真实心率样本"
+            motionSource == MeasurementSource.UNAVAILABLE -> "缺少真实运动样本"
             state == WatchRiskState.STABLE -> "仍需连续样本确认"
-            state == WatchRiskState.OBSERVE -> "只提示状态偏离"
-            else -> "不是医学诊断"
+            state == WatchRiskState.OBSERVE -> "仅提示状态偏离"
+            else -> "非医学诊断"
         }
 
     private sealed interface WearCommand {

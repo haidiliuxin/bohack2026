@@ -97,7 +97,7 @@ fun WearBreathingScreen(
             }
             item {
                 Text(
-                    text = "手表会用轻震同步节奏",
+                    text = "手表轻震同步节奏",
                     fontSize = 12.sp,
                     color = Color(0xFF93AAA5)
                 )
