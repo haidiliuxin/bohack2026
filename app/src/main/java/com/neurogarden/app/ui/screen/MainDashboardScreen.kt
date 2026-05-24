@@ -571,7 +571,7 @@ private fun TodayTab(
     onOpenBluetoothSettings: () -> Unit,
     onConnectWear: () -> Unit
 ) {
-    val risk = latestRiskScore(events, realtime)
+    val risk = latestRhythmRisk(events, realtime, chartData)
     val moodScore = riskToMoodScore(risk)
     val updateText = relativeTime(realtime.packet.timestamp)
     val temperature = estimatedTemperature(realtime, risk)
@@ -1900,6 +1900,13 @@ private fun moodVisual(score: Int): MoodVisual = when {
 
 private fun latestRiskScore(events: List<RiskEventEntity>, state: RealtimeUiState): Float =
     (events.firstOrNull()?.riskScore ?: state.personalizedRisk.riskScore).coerceIn(0f, 1f)
+
+private fun latestRhythmRisk(
+    events: List<RiskEventEntity>,
+    state: RealtimeUiState,
+    chartData: DashboardChartData
+): Float =
+    (chartData.riskScores.lastOrNull() ?: latestRiskScore(events, state)).coerceIn(0f, 1f)
 
 private fun riskToMoodScore(risk: Float): Int =
     (100 - risk.coerceIn(0f, 1f) * 100f).roundToInt().coerceIn(0, 100)

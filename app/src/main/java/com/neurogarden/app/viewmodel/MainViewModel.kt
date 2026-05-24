@@ -823,12 +823,13 @@ class MainViewModel(
             thresholdStatus = "当前已启用验收阈值",
             feedbackSummaryText = "提醒反馈：3/4 次有帮助，有效率 75%",
             personalizedRisk = _uiState.value.personalizedRisk.copy(
-                riskScore = 0.82f,
-                riskLevel = RiskLevel.GUARDIAN_CHECK,
+                riskScore = 0.62f,
+                riskLevel = RiskLevel.SUPPORT,
                 confidence = 0.86f,
-                suggestedAction = "建议查看今日异常事件，并进行一次温和状态确认。",
-                careMessage = "我注意到今天的节奏有些偏离。我们可以先慢一点，只确认你现在是否需要陪伴。"
-            )
+                suggestedAction = "建议查看今日异常事件，并进入陪伴或呼吸引导。",
+                careMessage = "我注意到今天有一段节奏偏离，最近一次记录已经有所缓和。我们可以先慢一点。"
+            ),
+            integrationDemoAlert = null
         )
     }
 
